@@ -1,0 +1,36 @@
+# Python artifacts and local environments
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.venv/
+venv/
+*.egg-info/
+build/
+dist/
+
+# Local credentials and machine settings
+.env
+.env.*
+!.env.example
+.vscode/
+.idea/
+
+# Model weights and generated conversion output
+*.safetensors
+*.ckpt
+*.pt
+*.pth
+*.bin
+*.gguf
+models/
+outputs/
+artifacts/
+*.partial
+*.log
+
+# Local operating-system files
+Thumbs.db
+Desktop.ini
+.DS_Store
