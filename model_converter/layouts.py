@@ -366,7 +366,7 @@ def canonicalize(tensors, config):
                     output[name]={**spec,"reshape":[math.prod(spec["shape"])],"shape":[math.prod(spec["shape"])]}
         layout = {"adapter": adapter, "status": "canonical mapping; full-model validation is separate"}
         if adapter == "minimax-h3-pruned":
-            layout["warnings"] = ["Pruned MiniMax uses ComfyUI's native adaln_t_table curve loader. The audited Forge installation has no MiniMax model detector; layer-format support does not supply the architecture. Full-model generation is unverified."]
+            layout["warnings"] = ["Pruned MiniMax uses ComfyUI's native adaln_t_table curve loader. The audited Forge installation has no MiniMax model detector; layer-format support does not supply the architecture."]
         return output, layout
     if cls == "HiDreamImageTransformer2DModel" and all(k in tensors for k in (
             "x_embedder.proj.weight", "double_stream_blocks.0.block.adaLN_modulation.1.weight", "final_layer.linear.weight")):

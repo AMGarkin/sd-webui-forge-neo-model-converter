@@ -352,6 +352,14 @@ group scales. Standard quantizes directly with the selected scale precision;
 Balanced and Thorough fit and measure candidates on that same stored FP8 grid.
 The converter never casts already optimized FP32 scales afterward.
 
+Group scales are fractional multipliers read directly by the W4A8/W6A8 loader,
+not Linear weights. INT8 ConvRot quantizes and rotates weight matrices; it is
+not a replacement scale dtype. Both grouped weight formats already use ConvRot.
+Quantizing the scale buffers to integers would need another scale and a different
+loader contract, not just another per-module `comfy_quant` entry. Compact retains
+FP8 scales to reduce storage while representing their varying fractional values;
+FP32 scales are the existing higher-precision alternative in other recipes.
+
 For the audited fused source, 1,141,604,352 group scales account for 4.57 decimal
 GB in FP32 and 1.14 GB in FP8. Compact's planned payload is now approximately
 **14.51 GB**, saving 3.42 GB versus its earlier FP32-scale implementation.
@@ -370,17 +378,23 @@ for the original method and source-specific evidence.
 The HF adapter supports the audited rank-8 folded AdaLN variant in
 `ibyteohdear/10Eros-Max-Transformer_8stepTURBO_v1.0_hybrid_VBVR_FUSED`.
 Select its root component and `diffusion_pytorch_model` set; all five shards
-form one input. It maps the timestep table, folded biases, QKV and gate-first
-MLPs to ComfyUI's native curve layout without executing repository Python.
+form one input. It maps the timestep table, folded biases and QKV, and swaps
+Diffusers SwiGLU halves from up/gate to native gate/up without executing
+repository Python.
+Earlier pruned-adapter exports retained the wrong SwiGLU half order and need
+regeneration. Changing protection or quantization settings cannot repair them.
 It retains FP32 folded biases and the F64 basis buffer. `adaln_basis` and
 `adaln_mean` remain in the file for provenance/adapter use; the ordinary ComfyUI
 model does not consume them. The existing **Extra protection for pruned models**
 switch is unrelated and is unavailable for this recipe.
 
 Actual source-header planning and ComfyUI constructor/shape checks passed, along
-with synthetic mixed export and layer forwards on CPU/CUDA. Full loading or
-generation of that fused model has not been tested. The audited Forge installation
-has no MiniMax model detector; supported quantized layers do not supply it.
+with synthetic mixed export and layer forwards on CPU/CUDA. The owner confirms
+ComfyUI video generation with the corrected ErosMax INT8 artifact and a fresh
+conversion after the SwiGLU fix. The fresh run's precise settings were not supplied;
+this does not establish generation for every format, profile or MiniMax variant.
+The audited Forge installation has no MiniMax model detector; supported quantized
+layers do not supply it.
 
 ### ConvRot groups
 

@@ -7,7 +7,10 @@ commit `9c0c2f88016fd1cc06c94e6e47da4fc225f767c3`. Audited root `config.json`,
 all five safetensors headers and `modeling_minimax_h3_pruned.py` as text only.
 No remote Python was imported/executed or copied into production. The independently
 authored adapter renames the already folded timestep table/biases, fuses Q/K/V
-and preserves the declared gate-first MLP order. FP32/F64 buffers retain source
+and swaps Diffusers up/gate MLP halves to native gate/up. The `_10eros` ordering
+flag describes provenance and does not override stored Diffusers layout. The
+owner's actual source/export/reference row comparisons exposed and corrected
+the earlier erroneous no-swap interpretation. FP32/F64 buffers retain source
 dtypes. Both `adaln_basis` and `adaln_mean` remain, although ordinary ComfyUI does
 not consume them. The source's baked LoRA and timestep approximation are retained;
 the converter does not merge another LoRA or reconstruct the removed timestep MLP.
@@ -19,6 +22,9 @@ The source computes a BF16 projection followed by FP32 bias addition; the target
 curve projection computes in FP32, so bitwise source-forward parity is not claimed.
 Meta constructor/shape agreement, sampled synthetic expressions and quantized
 layer forwards are distinct from populated full-model loading/generation.
+The owner subsequently confirms ComfyUI video generation with the repaired ErosMax
+INT8 file and a fresh conversion after the SwiGLU fix. The fresh run's exact
+settings were not supplied; this does not verify all formats or MiniMax variants.
 The audited Forge `a057d9ede903eb51c38ceb20e186b6841665d250` has no MiniMax detector.
 
 Separate precision-map reference: LokkenJP/TenEros_Max_optimized_learned at

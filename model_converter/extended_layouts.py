@@ -322,8 +322,6 @@ def minimax_pruned(tensors, config):
     rank, hidden, grid = config.get('adaln_rank'), config.get('hidden_size'), config.get('time_table_size')
     if any(type(value) is not int or value <= 0 for value in (rank, hidden, grid)) or grid < 2:
         raise ValueError('Pruned MiniMax requires explicit positive rank/hidden size and a time grid of at least two rows')
-    if config.get('_10eros', {}).get('mlp_source_gate_first') is not True:
-        raise ValueError('Pruned MiniMax requires the audited gate-first MLP declaration')
     expected = {'time_embedder.table': [grid, rank], 'adaln_basis': [rank, config.get('time_embed_dim')],
                 'adaln_mean': [config.get('time_embed_dim')], 'norm_out.linear.weight': [2 * hidden, rank],
                 'norm_out.folded_bias': [2 * hidden]}
@@ -336,10 +334,7 @@ def minimax_pruned(tensors, config):
     if len(_blocks(tensors, 'token_refiner.refiner_blocks')) != config.get('num_refiner_layers'):
         raise ValueError('Pruned MiniMax token-refiner depth disagrees with config')
     mapping = minimax(tensors, config)
-    # This audited pruned source and Comfy both store SwiGLU gate before up.
-    for name, (target, offset, swap) in list(mapping.items()):
-        if name.endswith('.ff.net.0.proj.weight'):
-            mapping[name] = (target, offset, False)
+    # Diffusers stores up then gate; _10eros's ordering flag is not a storage contract.
     for name in tensors:
         if name in ('adaln_basis', 'adaln_mean'):
             mapping[name] = (name, None, False)
