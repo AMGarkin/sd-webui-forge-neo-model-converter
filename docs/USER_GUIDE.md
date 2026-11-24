@@ -34,7 +34,7 @@ for layer/adapter checks. These do not establish every future revision's compati
 **Conversion device** defaults to **Automatic**: CUDA when available, otherwise
 CPU. Explicit CPU/CUDA conversion is also available. Errors do not trigger an
 automatic device change. The extension does not unload an active Forge model;
-free that memory yourself if needed. Original-precision export runs on CPU.
+free that memory yourself if needed. Original-precision and BF16/FP16 exports run on CPU.
 
 ## Choosing a source
 
@@ -102,6 +102,8 @@ layers must still satisfy format dimensions and loader requirements.
 | W6A8 | `w6a8_convrot` | Symmetric grouped 6-bit codes with INT8 reconstruction |
 | NVFP4 | `nvfp4` | Packed FP4, FP8 block scales and an FP32 global scale |
 | MXFP8 | `mxfp8` | FP8 weights and E8M0 block scales |
+| BF16 (dtype conversion) | `bf16` | Floating tensors cast to BF16; no quantization metadata |
+| FP16 (dtype conversion) | `fp16` | Floating tensors cast to FP16; no quantization metadata |
 | Original precision (no quantization) | `original` | Original dtypes; no quantization metadata |
 
 There is no single best format for all models. Lower bit widths can reduce size
@@ -109,7 +111,7 @@ further but change generation more. Protected weights stay in source precision,
 so size is not simply parameter count times bit width. Compare representative
 prompts against the original before relying on a conversion.
 
-Exports use per-module `comfy_quant`, canonical names, packed weights and scales.
+Quantized exports use per-module `comfy_quant`, canonical names, packed weights and scales.
 All request `full_precision_matrix_mult=true`: the host dequantizes for compute-dtype
 multiplication. This does not force FP32 or establish accelerated low-bit inference,
 speed gains or total VRAM savings. NVFP4/MXFP8 conversion explicitly uses Kitchen
@@ -121,11 +123,30 @@ Original precision assembles shards and applies implemented layout adaptations
 without quantizing or casting. It requires Standard, is not dequantization, and
 cannot supply a missing target architecture.
 
+**BF16 / FP16 (dtype conversion)** uses the same canonical adapters and shard
+assembly, then casts every floating tensor (including norms, biases, embeddings
+and buffers) to the chosen dtype. Integer/bool buffers and metadata are retained.
+These exports require Standard and ignore quantization protections, precision
+presets and per-layer format rules. Existing tensors in the target dtype retain
+their values. This is lossy precision conversion, without scales or `comfy_quant`.
+
+For example, select the `transformer` component from `Tongyi-MAI/Z-Image-Turbo`
+and choose **BF16 (dtype conversion)** to save its FP32 weights as BF16. For
+FP32 tensors the output payload uses half as many bytes; download size is unchanged.
+FP16 has a narrower numeric range than BF16. Non-finite sources or cast overflow
+fail explicitly before publication; no values are clamped or format substituted.
+Preview estimates payload size but cannot detect overflow without reading weights.
+Casting alone does not establish full-model loading, generation quality or speed.
+
 ### Compatibility
 
 Conversion structurally validates output before publication. It does not execute
 a complete model or generate a test image. Structural validation, quantized-layer
 loading/forwards, full-model loading and generation are separate evidence levels.
+
+BF16/FP16 dtype exports have synthetic file, strict Linear loading and forward
+checks in both Forge Neo and ComfyUI on CPU/CUDA. Full Z-Image conversion and
+generation from these new exports have not been independently verified.
 
 These user-generated examples provide representative functional evidence, not a
 complete compatibility matrix or a general quality ranking:
@@ -174,7 +195,8 @@ Known limits:
   unsupported variants report their adapter gap. Universal cannot invent arbitrary
   key remapping or a missing architecture.
 
-The 60 model/recipe choices use pinned StarNodes/CTQ data. HQ, MaxQ and All Versions
+The model/recipe choices include pinned StarNodes/CTQ data and a separate manual
+MiniMax Compact map. HQ, MaxQ and All Versions
 are recipe names, not compatibility/quality guarantees. GGUF, AWQ, SVDQuant, CTQ
 blockwise FP8/INT8 and hybrid MXFP8 are not aliases for these exporters.
 See [layout sources](HF_LAYOUT_SOURCES.md) and the README's license notices.
@@ -304,6 +326,61 @@ Enabled protections win, followed by preserve globs, boundary blocks, the first
 matching JSON rule, attention preset, enabled profile rules and the main format.
 Rules cannot force unsupported tensor types/dimensions. Unmatched rules and blocked
 overrides are reported. Filenames identify the main format; inspect details for mixtures.
+
+### MiniMax H3 Compact W4/W6/INT8
+
+Select **MiniMax H3 Compact W4/W6/INT8 (LokkenJP map)** under Conversion policy,
+then enable **Use profile format overrides**. Keep **Enable layer protections**
+and **Model-specific layer protection** on, the uniform precision preset, zero
+first/last-block keeps, and no custom keep/format rules for the exact map.
+Use fixed **ConvRot group size 256**, with Dynamic off. **W4A8 ConvRot** is a
+convenient main-format choice; the enabled recipe sets each target's actual format.
+Choose Standard, Balanced or Thorough according to the existing optimization
+settings. The profile remains manual and does not change automatic detection.
+
+This reproduces the precision assignments from
+[LokkenJP's ErosMax v1 Compact report](https://huggingface.co/LokkenJP/TenEros_Max_optimized_learned/blob/3415250db9e2cb89b886f5375c1306fc933e215f/10Eros_Max_8stepTurbo_v1.0_hybrid_activation_learned_compact_w4w6int8_14.50gb.safetensors.quantization.json):
+64 W4A8 and 122 W6A8 main matrices, plus 14 main and eight token-refiner INT8
+ConvRot matrices. Other tensors retain their dtypes and values after canonical
+layout adaptation. Exactly 50 main blocks and two refiner blocks are required;
+the recipe fails on incompatible layouts instead of extrapolating indices.
+Advanced settings can change assignments and are reported as a modified recipe.
+
+With profile format overrides enabled, Compact stores W4A8/W6A8 group scales in
+**FP8 E4M3**, with FP32 channel scales. Other recipes keep their existing FP32
+group scales. Standard quantizes directly with the selected scale precision;
+Balanced and Thorough fit and measure candidates on that same stored FP8 grid.
+The converter never casts already optimized FP32 scales afterward.
+
+For the audited fused source, 1,141,604,352 group scales account for 4.57 decimal
+GB in FP32 and 1.14 GB in FP8. Compact's planned payload is now approximately
+**14.51 GB**, saving 3.42 GB versus its earlier FP32-scale implementation.
+This excludes the safetensors header. Source FP32 folded biases/F64 buffers
+remain intact; the result need not match the original artifact byte for byte.
+
+The author's checkpoint also uses activation-calibrated learned weights, an
+optimized W4 codebook and discrete polishing. This converter uses symmetric
+codebook-free grids and data-free optimization. Matching the precision map
+and scale storage does not reproduce learned values or generation quality.
+The reference's 64 small W4 codebooks total only 4096 bytes; their purpose is
+reconstruction quality rather than the multi-gigabyte size saving. See the author's
+[technical overview](https://huggingface.co/LokkenJP/TenEros_Max_optimized_learned/blob/3415250db9e2cb89b886f5375c1306fc933e215f/H3_EROSMAX_V1_TECHNICAL_OVERVIEW.md)
+for the original method and source-specific evidence.
+
+The HF adapter supports the audited rank-8 folded AdaLN variant in
+`ibyteohdear/10Eros-Max-Transformer_8stepTURBO_v1.0_hybrid_VBVR_FUSED`.
+Select its root component and `diffusion_pytorch_model` set; all five shards
+form one input. It maps the timestep table, folded biases, QKV and gate-first
+MLPs to ComfyUI's native curve layout without executing repository Python.
+It retains FP32 folded biases and the F64 basis buffer. `adaln_basis` and
+`adaln_mean` remain in the file for provenance/adapter use; the ordinary ComfyUI
+model does not consume them. The existing **Extra protection for pruned models**
+switch is unrelated and is unavailable for this recipe.
+
+Actual source-header planning and ComfyUI constructor/shape checks passed, along
+with synthetic mixed export and layer forwards on CPU/CUDA. Full loading or
+generation of that fused model has not been tested. The audited Forge installation
+has no MiniMax model detector; supported quantized layers do not supply it.
 
 ### ConvRot groups
 
@@ -447,7 +524,7 @@ Unlike the UI, the worker needs an explicit output filename and existing parent.
 Relative directories use the invocation directory; bare local output filenames
 remain source-relative. Format IDs: `float8_e4m3fn`, `float8_e5m2`,
 `int8_tensorwise`, `int8_convrot`, `convrot_w4a4`, `asym_w4a8_int8`, `w6a8_int8`,
-`nvfp4`, `mxfp8`, `original`.
+`nvfp4`, `mxfp8`, `bf16`, `fp16`, `original`.
 
 Mode IDs: `standard`, `balanced`, `thorough`; optimizer IDs: `adamw`, `prodigy`.
 Omitted/null steps mean 2000; numeric zero is rejected unlike the UI sentinel.

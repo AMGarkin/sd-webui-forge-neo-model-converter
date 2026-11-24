@@ -10,6 +10,7 @@ from modules.paths_internal import models_path, script_path
 from modules.ui_components import ToolButton
 
 from model_converter.core import Request
+from model_converter.formats import UNQUANTIZED_FORMATS
 from model_converter.optimization import MODE_CHOICES, OPTIMIZER_CHOICES, THOROUGH_FORMATS
 from model_converter.console import log_console
 from model_converter.diagnostics import exception_message
@@ -110,7 +111,8 @@ def build_tab():
                         info="Complete sources remain reusable from Local disk, including offline. Failed/partial downloads are preserved for retry.")
                     hf_status = gr.Markdown("Only the chosen weight set and its config/index metadata will be downloaded.")
                 hf_catalog = gr.State({})
-                format = gr.Dropdown(choices=[label for label, _ in FORMAT_CHOICES], value="FP8 e4m3fn", label="Output format")
+                format = gr.Dropdown(choices=[label for label, _ in FORMAT_CHOICES], value="FP8 e4m3fn", label="Output format",
+                    info="BF16/FP16 cast all floating tensors, including norms and biases, on CPU. Non-floating buffers stay unchanged. These exports use Standard without quantization or layer protections. FP16 overflow fails explicitly.")
                 optimization_mode = gr.Dropdown(choices=[label for label, _ in MODE_CHOICES], value="Standard", label="Optimization",
                     info="Standard: direct conversion. Balanced: scale search. Thorough: scale search and learned rounding; takes longer. Reconstruction metrics do not guarantee image quality.")
                 gr.Markdown("Local outputs are saved beside the source. HF outputs use the host's diffusion/text-encoder model folder. "
@@ -370,17 +372,17 @@ def build_tab():
 
         folder.input(select_folder, folder, source, queue=False)
         def update_start(fmt):
-            return gr.update(value="Save model" if choice_value(FORMAT_CHOICES, fmt) == "original" else "Quantize model")
+            return gr.update(value="Save model" if choice_value(FORMAT_CHOICES, fmt) in UNQUANTIZED_FORMATS else "Quantize model")
         format.change(update_start, format, start, queue=False)
         panel.load(update_start, format, start, queue=False)
         def update_optimization(fmt, mode):
             fmt = choice_value(FORMAT_CHOICES, fmt)
             mode = choice_value(MODE_CHOICES, mode)
-            choices = MODE_CHOICES if fmt in THOROUGH_FORMATS else MODE_CHOICES[:2] if fmt != "original" else MODE_CHOICES[:1]
+            choices = MODE_CHOICES if fmt in THOROUGH_FORMATS else MODE_CHOICES[:2] if fmt not in UNQUANTIZED_FORMATS else MODE_CHOICES[:1]
             # Reset an unavailable selection visibly when the output format changes.
             selected = next((label for label, value in choices if value == mode), "Standard")
             return gr.update(choices=[label for label, _ in choices], value=selected,
-                             interactive=fmt != "original")
+                             interactive=fmt not in UNQUANTIZED_FORMATS)
         format.change(update_optimization, [format, optimization_mode], optimization_mode, queue=False)
         panel.load(update_optimization, [format, optimization_mode], optimization_mode, queue=False)
         refresh.click(refresh_models, [folder, source], [folder, source], queue=False)
@@ -417,6 +419,11 @@ def build_tab():
             selected_profile = canonical_ui_profile(selected_profile)
             kind = choice_value(SOURCE_CHOICES, kind)
             fmt = choice_value(FORMAT_CHOICES, fmt)
+            if fmt in UNQUANTIZED_FORMATS:
+                description = ("Original precision export retains tensor dtypes and values." if fmt == "original" else
+                               f"{fmt.upper()} export casts all floating tensors, including protected layers, norms and biases; non-floating buffers retain their dtypes and values. FP16 overflow fails without publishing output.")
+                return (description + " Canonical layout adaptation still applies. Quantization policies and precision rules are inactive.",
+                        gr.update(interactive=False), gr.update(interactive=False))
             general = bool(general and protections)
             model = bool(model and protections)
             protection_status = ("All layer protections are off. " if not protections else
@@ -440,7 +447,7 @@ def build_tab():
                 return ("Profile availability: " + exception_message(error),
                         gr.update(value=False, interactive=False), gr.update(value=False, interactive=False))
             extra_available = bool(model and reference.extra_available)
-            format_available = bool(protections and reference.star and any(reference.star.recipe.get(field) for field, _ in reference.star.overrides))
+            format_available = bool(protections and reference.format_overrides_available)
             extra_status = "Available" if extra_available else "Not available for this profile" if model else "Model-specific protection is off"
             recipe_status = ("Off while layer protections are disabled" if not protections else
                              "On" if formats and format_available else

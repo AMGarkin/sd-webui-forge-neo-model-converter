@@ -8,7 +8,7 @@ import re
 import time
 
 from .paths import clean_path, resolve_source, resolve_output
-from .formats import FORMAT_SUFFIXES
+from .formats import FORMAT_SUFFIXES, PRECISION_DTYPES
 from .sources import local_sets, group_source, SHARD
 from .console import convrot_summary, optimization_summary
 
@@ -17,6 +17,7 @@ FORMAT_CHOICES = [("FP8 e4m3fn", "float8_e4m3fn"), ("FP8 e5m2", "float8_e5m2"),
                   ("INT8", "int8_tensorwise"), ("INT8 ConvRot", "int8_convrot"),
                   ("W4A8 ConvRot", "asym_w4a8_int8"), ("W6A8 ConvRot", "w6a8_int8"),
                   ("INT4 ConvRot (W4A4)", "convrot_w4a4"), ("MXFP8", "mxfp8"), ("NVFP4", "nvfp4"),
+                  ("BF16 (dtype conversion)", "bf16"), ("FP16 (dtype conversion)", "fp16"),
                   ("Original precision (no quantization)", "original")]
 
 
@@ -214,6 +215,9 @@ def summary(snapshot):
             activity = (f"{counts['preserve']} tensors saved in original precision; no quantization. "
                         if report['plan']['request']['format'] == 'original' else
                         f"{counts['quantize']} weights converted; {counts['preserve']} tensors preserved. ")
+            if report['plan']['request']['format'] in PRECISION_DTYPES:
+                activity = (f"{counts['cast']} tensors cast to {report['plan']['request']['format'].upper()}; "
+                            f"{counts['preserve']} tensors already in target dtype or non-floating retained; no quantization. ")
             message = (f"Saved: {report['plan']['request']['output']}\n"
                        f"{activity}"
                        f"Size: {report['output_bytes'] / 1024**3:.2f} GiB. "
@@ -224,6 +228,10 @@ def summary(snapshot):
                        f"Device: {report.get('request', {}).get('device', 'unknown').upper()}. Nothing has been written.")
             if report.get('request', {}).get('format') == 'original':
                 message = f"Preview ready: {len(report.get('layers', []))} tensors to save in original precision. No quantization. Nothing has been written."
+            elif report.get('request', {}).get('format') in PRECISION_DTYPES:
+                cast = sum(e['action'] == 'cast' for e in report.get('layers', []))
+                message = (f"Preview ready: {cast} tensors to cast to {report['request']['format'].upper()}; "
+                           f"{len(report.get('layers', [])) - cast} tensors retained. No quantization. Nothing has been written.")
     conversion_plan = report.get("plan", report)
     optimization = optimization_summary(conversion_plan.get("optimization_selection", {}))
     if optimization:

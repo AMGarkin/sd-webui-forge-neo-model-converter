@@ -5,6 +5,7 @@ import re
 from .catalog import CatalogProfile
 from .formats import FORMATS
 from .reference_data import ctq_data, ctq_filter, TOOLS_SOURCE, TOOLS_COMMIT
+from . import compact
 
 
 # Map architecture families, never similarly named but unrelated components.
@@ -52,6 +53,7 @@ class ReferenceProtection:
         self.protect_model = protect_model
         self.use_profile_formats = use_profile_formats
         self.native = profile in NATIVE_REFERENCES
+        self.compact = profile == compact.PROFILE
         star_name, filters = None, ()
         if self.native:
             star_name, filters = NATIVE_REFERENCES[profile]
@@ -63,7 +65,7 @@ class ReferenceProtection:
             ctq_filter(filter_name)  # Reject an unknown choice, never fall back.
             filters = (filter_name,)
             star_name = CTQ_STARS.get(filter_name)
-        elif profile != "universal":
+        elif profile != "universal" and not self.compact:
             raise ValueError(f"Unsupported model profile: {profile}")
         self.star = CatalogProfile("star:" + star_name, pruned) if star_name else None
         self.filters = filters
@@ -98,6 +100,8 @@ class ReferenceProtection:
     def protection(self, name, format=None):
         if not self.protect_model:
             return []
+        if self.compact:
+            return [] if name in compact.FORMATS else ["MiniMax Compact preserves tensors outside its 208-matrix precision map"]
         reasons = []
         if self.star:
             reason = self.star.protection(name, format)
@@ -121,7 +125,14 @@ class ReferenceProtection:
         return reasons
 
     def format_override(self, name, format):
+        if self.compact and self.use_profile_formats and name in compact.FORMATS:
+            target = compact.FORMATS[name]
+            return target, f"MiniMax Compact precision map: {name} -> {target}"
         return self.star.format_override(name, format) if self.star and self.use_profile_formats else (format, None)
+
+    @property
+    def format_overrides_available(self):
+        return self.compact or bool(self.star and any(self.star.recipe.get(field) for field, _ in self.star.overrides))
 
     @property
     def extra_available(self):
@@ -138,6 +149,7 @@ class ReferenceProtection:
     def details(self, tensors):
         data, digest = ctq_data()
         return {"profile": self.profile, "model_protection_enabled": self.protect_model,
+                "compact": compact.details() if self.compact else None,
                 "profile_format_rules_enabled": self.use_profile_formats,
                 "star": self.star_details(tensors),
                 "ctq": {"source": data["source"], "commit": data["commit"], "data_sha256": digest,
@@ -158,6 +170,8 @@ class ReferenceProtection:
                 "pruned_extra_protection": self.extra_enabled}
 
     def notes(self, tensors):
+        if self.compact:
+            return [compact.DESCRIPTION]
         source_notes = self.star.notes(tensors) if self.star else []
         notes = source_notes if self.protect_model else [note for note in source_notes
             if self.use_profile_formats and ("AWQ" in note or "tensorwise INT4" in note)]

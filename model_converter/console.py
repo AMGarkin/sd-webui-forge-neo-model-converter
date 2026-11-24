@@ -18,7 +18,9 @@ def log_console(level, message):
 def protection_summary(settings):
     """Describe actual user controls, including an unavailable extra-rule set."""
     if settings.get("applied") is False:
-        return "original precision; all canonical tensors retained without quantization"
+        precision = settings.get("output_precision", "original")
+        return ("original precision; all canonical tensors retained without quantization" if precision == "original" else
+                f"{precision.upper()} export; floating tensors use target dtype; non-floating buffers retained; no quantization or layer protections")
     flag = lambda value: "on" if value else "off"
     extra = settings.get("extra", {})
     if not extra.get("available"):

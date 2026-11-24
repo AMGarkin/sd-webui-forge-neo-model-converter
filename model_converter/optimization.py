@@ -12,7 +12,7 @@ import json
 import math
 import time
 
-from .formats import (FORMATS, MICROSCALED_FORMATS, ROTATED_FORMATS, ADJUSTABLE_ROTATED_FORMATS,
+from .formats import (FORMATS, UNQUANTIZED_FORMATS, MICROSCALED_FORMATS, ROTATED_FORMATS, ADJUSTABLE_ROTATED_FORMATS,
                       quantization_config, storage_contract, resolve_convrot_group)
 
 
@@ -55,11 +55,12 @@ def settings(request, formats, probe=False):
               "early_stop": request.optimization_early_stop, "patience": request.optimization_patience,
               "min_delta": request.optimization_min_delta, "minimum_steps": 100,
               "svd_rank_limit": SVD_RANK, "scale_ratios": list(SCALE_RATIOS),
-              "calibration": "none (data-free)", "applied": request.format != "original"}
+              "calibration": "none (data-free)", "applied": request.format not in UNQUANTIZED_FORMATS}
     mode = result["mode"]
-    if request.format == "original":
+    if request.format in UNQUANTIZED_FORMATS:
         if mode != "standard":
-            raise ValueError("Original precision export requires Standard; there are no quantization parameters to optimize")
+            label = "Original precision" if request.format == "original" else request.format.upper()
+            raise ValueError(f"{label} export requires Standard; there are no quantization parameters to optimize")
     if mode == "thorough":
         unsupported = set(formats) - set(THOROUGH_FORMATS)
         if unsupported:
@@ -229,7 +230,7 @@ def _balanced(target, layout, qdata, params, format, checkpoint, ratios=SCALE_RA
     return _encode(best_values, format), _with_units(params, best_units, format)
 
 
-def _balanced_grouped(weight, layout, qdata, params, format, checkpoint):
+def _balanced_grouped(weight, layout, qdata, params, format, checkpoint, group_scale_dtype="F32"):
     """Search through Kitchen's complete grouped INT8 decode, including both scales."""
     import torch
     from .backend import quantize_layout
@@ -237,7 +238,7 @@ def _balanced_grouped(weight, layout, qdata, params, format, checkpoint):
     for ratio in SCALE_RATIOS[1:]:
         checkpoint(f"Balanced grouped-scale search ({ratio:g})")
         limit = weight.abs().amax(-1, keepdim=True) * ratio
-        _, codes, candidate = quantize_layout(weight.clamp(-limit, limit), format)
+        _, codes, candidate = quantize_layout(weight.clamp(-limit, limit), format, group_scale_dtype=group_scale_dtype)
         score = (layout.dequantize(codes, candidate).float() - weight).square().sum(-1)
         better = score < error
         qdata = torch.where(better[:, None], codes, qdata)
@@ -382,7 +383,7 @@ def _learn(target, original, layout, qdata, params, format, group, options, tile
 
 def quantize_optimized(read_rows, shape, name, format, device, options, checkpoint=lambda stage: None,
                        group=256, tile_elements=TILE_ELEMENTS, progress=lambda fraction, phase: None,
-                       observe=lambda event: None):
+                       observe=lambda event: None, group_scale_dtype="F32"):
     """Read bounded rows; serialize one layer's packed CPU output, never its FP32 matrix."""
     import comfy_kitchen as ck
     import torch
@@ -443,7 +444,7 @@ def quantize_optimized(read_rows, shape, name, format, device, options, checkpoi
                 del tile, codes, params
                 progress(.05 + .15 * min(start + rows, n) / n, "Searching quantization scales")
             chosen_scale = global_scale * SCALE_RATIOS[min(range(len(errors)), key=errors.__getitem__)]
-        specs = storage_contract(format, shape)
+        specs = storage_contract(format, shape, group_scale_dtype)
         dtypes = {"I8": torch.int8, "U8": torch.uint8, "F32": torch.float32,
                   "F8_E4M3": torch.float8_e4m3fn, "F8_E5M2": torch.float8_e5m2}
         output = {name + suffix: torch.empty(spec["shape"], dtype=dtypes[spec["dtype"]]) for suffix, spec in specs.items()}
@@ -451,14 +452,14 @@ def quantize_optimized(read_rows, shape, name, format, device, options, checkpoi
             stop = min(start + rows, n)
             progress(.2 + .8 * start / n, "Optimizing quantization scales")
             weight = read(start, stop)
-            layout, base_codes, base_params = quantize_layout(weight, format, group, global_scale)
+            layout, base_codes, base_params = quantize_layout(weight, format, group, global_scale, group_scale_dtype)
             baseline_decoded = layout.dequantize(base_codes, base_params).float()[:stop-start, :k]
             totals["baseline_sse"] += (baseline_decoded - weight).square().sum(dtype=torch.float64).item()
             del baseline_decoded
             if scalar:
                 _, codes, params = quantize_layout(weight, format, group, chosen_scale)
             elif format in GROUPED_INT8_FORMATS:
-                codes, params = _balanced_grouped(weight, layout, base_codes, base_params, format, checkpoint)
+                codes, params = _balanced_grouped(weight, layout, base_codes, base_params, format, checkpoint, group_scale_dtype)
             else:
                 target = _rotate(weight, format, group)
                 padded = layout.dequantize(base_codes, base_params).shape

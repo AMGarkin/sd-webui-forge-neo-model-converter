@@ -15,7 +15,7 @@ from .core import Request
 from .diagnostics import exception_message, exit_message
 from .console import log_console
 from .paths import absolute_paths
-from .formats import FORMAT_SUFFIXES
+from .formats import FORMAT_SUFFIXES, PRECISION_DTYPES
 from .console import protection_summary, convrot_summary, optimization_summary
 from .job_storage import JobLock, JOB_MARKER
 
@@ -126,7 +126,10 @@ class Jobs:
                             job["progress"] = min(0.99, max(job["progress"], event.get("fraction", 0)))
                             job["phase"] = event.get("phase", "Converting weights")
                         if kind == "prepared":
-                            log_console("Ready", f"{event.get('device', '?').upper()}, {event.get('export_engine', '?')}, profile={event.get('profile_label', event.get('profile', '?'))}, precision={event.get('precision_policy', 'uniform')}; {event.get('quantize', 0)} weights to convert, {event.get('preserve', 0)} tensors preserved")
+                            activity = (f"{event.get('cast', 0)} tensors to cast to {event['format'].upper()}, {event.get('preserve', 0)} tensors retained"
+                                        if event.get('format') in PRECISION_DTYPES else
+                                        f"{event.get('quantize', 0)} weights to convert, {event.get('preserve', 0)} tensors preserved")
+                            log_console("Ready", f"{event.get('device', '?').upper()}, {event.get('export_engine', '?')}, profile={event.get('profile_label', event.get('profile', '?'))}, precision={event.get('precision_policy', 'uniform')}; {activity}")
                             if event.get("protection_settings"):
                                 log_console("Settings", protection_summary(event["protection_settings"]))
                             if convrot_summary(event.get("convrot_selection", {})):
@@ -193,6 +196,9 @@ class Jobs:
                             counts = report.get("counts", {})
                             activity = (f"{counts.get('preserve', 0)} tensors saved in original precision" if request.format == "original" else
                                         f"{counts.get('quantize', 0)} weights converted, {counts.get('preserve', 0)} tensors preserved")
+                            if request.format in PRECISION_DTYPES:
+                                activity = (f"{counts.get('cast', 0)} tensors cast to {request.format.upper()}, "
+                                            f"{counts.get('preserve', 0)} tensors retained; no quantization")
                             log_console("Completed", f"{activity}; {report.get('output_bytes', 0) / 1024**3:.2f} GiB in {job['elapsed']:.1f}s; saved {request.output}")
                             optimization = report.get("optimization", {})
                             if optimization.get("optimized_layers"):
@@ -204,7 +210,8 @@ class Jobs:
                                 log_console("Optimization", f"{optimization['mode'].title()}; {objective}weight MSE improved vs Standard in {optimization['improved_weight_mse_layers']}/{optimization['optimized_layers']} layers; "
                                             f"{learned}{optimization['fallbacks']} reported candidate retentions/fallbacks")
                         else:
-                            log_console("Preview", f"{sum(e['action'] == 'quantize' for e in report.get('layers', []))} weights selected; no checkpoint written")
+                            action = "cast" if request.format in PRECISION_DTYPES else "preserve" if request.format == "original" else "quantize"
+                            log_console("Preview", f"{sum(e['action'] == action for e in report.get('layers', []))} tensors selected for {request.format}; no checkpoint written")
                             if report.get("protection_settings"):
                                 log_console("Settings", protection_summary(report["protection_settings"]))
                             if convrot_summary(report.get("convrot_selection", {})):

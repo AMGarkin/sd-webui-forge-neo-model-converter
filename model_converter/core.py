@@ -3,6 +3,7 @@
 from dataclasses import asdict, dataclass
 from collections import Counter
 import json
+import math
 from pathlib import Path
 import time
 import os
@@ -11,7 +12,9 @@ import shutil
 import errno
 
 from .backend import FORMATS, capabilities, quantize, quantize_nvfp4_tiled, NVFP4_TILE_ELEMENTS, versions
-from .io import inspect, read_header, StreamWriter, TensorReader
+from .io import inspect, read_header, StreamWriter, TensorReader, SIZES
+from .formats import PRECISION_DTYPES, UNQUANTIZED_FORMATS
+from . import compact
 from .layouts import inspect_canonical, CanonicalReader, input_files
 from .profiles import select_profile, detect_profile, universal_selection, dimension_anchor, qwen3vl_identity, PROFILES
 from .policies import PrecisionPolicy
@@ -98,8 +101,9 @@ def _plan_local(request, probe=True):
     request.source, request.output = absolute_paths(request.source, request.output)
     requested_device = request.device
     requested_profile = request.profile
-    request.device = "cpu" if request.format == "original" else resolve_device(request.device)
-    if request.format not in (*FORMATS, "original"):
+    unquantized = request.format in UNQUANTIZED_FORMATS
+    request.device = "cpu" if unquantized else resolve_device(request.device)
+    if request.format not in (*FORMATS, *UNQUANTIZED_FORMATS):
         raise ValueError("Unsupported format; no silent fallback is permitted")
     tensors, source_metadata, source_layout = inspect_canonical(request.source)
     output = Path(request.output).resolve()
@@ -114,19 +118,21 @@ def _plan_local(request, probe=True):
     for field in ("pruned_protection", "protect_general", "protect_model", "use_profile_formats", "protect_layers"):
         if type(getattr(request, field)) is not bool:
             raise ValueError(f"{field} must be true or false")
-    if not request.protect_layers or request.format == "original":
+    if not request.protect_layers or unquantized:
         request.protect_general = request.protect_model = request.pruned_protection = request.use_profile_formats = False
         request.keep_first_blocks = request.keep_last_blocks = 0
         request.preserve_patterns = ""
-        if request.precision_policy == "preserve_attention" or request.format == "original":
+        if request.precision_policy == "preserve_attention" or unquantized:
             request.precision_policy = "uniform"
-        if request.format == "original":
+        if unquantized:
             request.layer_rules = ""
-    native = request.profile in PROFILES
+    native = request.profile in PROFILES or request.profile == compact.PROFILE
     if native:
         select_profile(tensors, request.profile)  # Signature validation, not a projection allowlist.
     references = ReferenceProtection(request.profile, tensors, request.pruned_protection,
                                      request.protect_model, request.use_profile_formats)
+    if references.compact and request.use_profile_formats and (request.convrot_group_size != 256 or request.dynamic_convrot):
+        raise ValueError("MiniMax Compact requires fixed ConvRot group 256; disable Dynamic and select 256")
     catalog = references.star
     entries, estimate, precision = _plan_layers(request, tensors, references, native)
     extra = {"requested": request.pruned_protection, "available": references.extra_available,
@@ -140,15 +146,17 @@ def _plan_local(request, probe=True):
         except ValueError as error:
             extra["additional_preserved_weights"] = None
             extra["comparison_note"] = str(error)
-    if request.format != "original" and not any(e["action"] == "quantize" for e in entries):
+    if not unquantized and not any(e["action"] == "quantize" for e in entries):
         raise ValueError("No eligible linear weights for this policy and format. The profile or advanced rules may preserve all candidates. Convolutional weights (common in VAE/vae_approx), lookup tables, small matrices and incompatible rotation widths are preserved. Try the optional preview or another format; this converter does not quantize convolutions.")
     format_counts = {format: sum(e["action"] == "quantize" and e["format"] == format for e in entries)
                      for format in FORMATS if any(e["format"] == format for e in entries)}
     convrot_groups = {fmt: sorted({e["convrot_group_size"] for e in entries
                                   if e["action"] == "quantize" and e["format"] == fmt})
                       for fmt in format_counts if fmt in ROTATED_FORMATS}
+    group_scale_dtypes = {e["format"]: e["group_scale_dtype"] for e in entries if e.get("group_scale_dtype")}
     optimization = optimization_settings(request, format_counts, probe)
-    availability = capabilities(request.device, formats=tuple(format_counts), convrot_groups=convrot_groups) if probe and format_counts else {}
+    availability = capabilities(request.device, formats=tuple(format_counts), convrot_groups=convrot_groups,
+                                group_scale_dtypes=group_scale_dtypes) if probe and format_counts else {}
     for format, capability in availability.items():
         if not capability["available"]:
             raise ValueError(f"{format}: {capability['reason']}")
@@ -160,7 +168,8 @@ def _plan_local(request, probe=True):
                 sample = torch.linspace(-1, 1, 8 * width).reshape(8, width)
                 try:
                     quantize_optimized(lambda start, stop: sample[start:stop], sample.shape, "probe.weight", fmt,
-                                       request.device, {**optimization, "steps": 1, "early_stop": False}, group=group)
+                                       request.device, {**optimization, "steps": 1, "early_stop": False}, group=group,
+                                       group_scale_dtype=group_scale_dtypes.get(fmt, "F32"))
                 except Exception as error:
                     raise ValueError(f"{request.optimization_mode.title()} {fmt} API probe failed: {error}") from error
             availability[fmt]["optimization_probe"] = {"mode": request.optimization_mode, "available": True,
@@ -171,7 +180,16 @@ def _plan_local(request, probe=True):
         policy_notes.insert(0, "No known standalone model profile matched; using Universal selection.")
     policy_notes.extend(references.notes(tensors))
     policy_warnings = precision.notes() + references.warnings(tensors)
-    if not request.protect_layers and request.format != "original":
+    if references.compact and not unquantized:
+        policy_warnings.append("Compact uses this converter's symmetric grids, not the author's activation-learned codebook/weights. Enabled profile format overrides use compact FP8 group scales. Generation quality is not reproduced by matching size or precision assignments.")
+        if not request.use_profile_formats:
+            policy_warnings.append("Compact mixed precision is inactive. Enable Use profile format overrides to apply its W4/W6/INT8 assignments.")
+        else:
+            deviations = sum(e["name"] in compact.FORMATS and
+                             (e["action"] != "quantize" or e["format"] != compact.FORMATS[e["name"]]) for e in entries)
+            if deviations:
+                policy_warnings.append(f"Advanced precision/protection settings change {deviations} Compact matrix assignments; this is a modified recipe.")
+    if not request.protect_layers and not unquantized:
         policy_warnings.append("All layer protections are disabled, including embeddings and packed dimension probes. Quality or target loading can fail. Unsupported tensor types and format dimensions still cannot be quantized.")
     incompatible_widths = Counter(e["shape"][1] for e in entries if e["action"] == "preserve"
         and e["reason"].startswith("Preserve matrix whose input width is not divisible by rotation group "))
@@ -195,7 +213,7 @@ def _plan_local(request, probe=True):
     loader_notes.extend(source_layout.get("warnings", []))
     if source_layout["adapter"] in ("universal-identity", "transformers-identity"):
         loader_notes.append(source_layout["status"])
-    if "encoder.feature_extractor.mel_mean" in tensors and "decoder.layernorm_embedding.weight" in tensors:
+    if not unquantized and "encoder.feature_extractor.mel_mean" in tensors and "decoder.layernorm_embedding.weight" in tensors:
         loader_notes.append("SheetSage2: the inspected ComfyUI audio-encoder loader uses ordinary manual_cast operations and does not consume comfy_quant. This export needs a quantization-aware loader; audio inference is not validated.")
     identity = qwen3vl_identity(tensors)
     label = profile_label(request.profile)
@@ -211,11 +229,11 @@ def _plan_local(request, probe=True):
                                    "maximum_group_size": max(CONVROT_GROUP_SIZES), "groups_by_format": convrot_groups,
                                    "counts": dict(sorted(Counter(str(e["convrot_group_size"]) for e in entries
                                        if e["action"] == "quantize" and e["format"] in ROTATED_FORMATS).items()))},
-            "precision_selection": precision.details(), "format_counts": format_counts,
+            "precision_selection": precision.details(), "format_counts": format_counts, "group_scale_dtypes": group_scale_dtypes,
             "profile_reference": references.star_details(tensors),
             "protection_selection": references.details(tensors),
             "policy_notes": policy_notes, "policy_warnings": policy_warnings,
-            "protection_settings": {"applied": request.format != "original", "all": request.protect_layers, "general": request.protect_general, "model": request.protect_model,
+            "protection_settings": {"applied": not unquantized, "output_precision": request.format, "all": request.protect_layers, "general": request.protect_general, "model": request.protect_model,
                                     "profile_formats": request.use_profile_formats, "extra": extra},
             "loader_notes": loader_notes,
             "export_engine": "safetensors streaming (no quantization)" if not engines else next(iter(engines.values())) if len(set(engines.values())) == 1 else "mixed Kitchen engines",
@@ -228,9 +246,9 @@ def _plan_local(request, probe=True):
             "compatibility": "experimental; this run performs structural validation only; see docs/USER_GUIDE.md#compatibility for separate loader and user-reported generation evidence",
             "warnings": ["Payload estimate excludes header and is not a VRAM or speed estimate",
                          "Two output-sized disk buffers are required during finalization",
-                         *([] if request.format == "original" else ["full_precision_matrix_mult=true: quantized storage with compute-dtype matmul"])] + (
+                         *([] if unquantized else ["full_precision_matrix_mult=true: quantized storage with compute-dtype matmul"])] + (
                          ["Universal selection infers linear weights from names and shapes. The host must support comfy_quant for these modules; key remapping and full-model compatibility are not implied."]
-                         if request.profile == "universal" and request.format != "original" else []) + loader_notes + policy_notes,
+                         if request.profile == "universal" and not unquantized else []) + loader_notes + policy_notes,
             "versions": versions()}
 
 
@@ -240,10 +258,16 @@ def _plan_layers(request, tensors, references, native):
     estimate = 0
     for name, spec in sorted(tensors.items()):
         shape = spec["shape"]
-        if request.format == "original":
-            estimate += spec["data_offsets"][1] - spec["data_offsets"][0]
-            entries.append({"name": name, **spec, "action": "preserve", "format": None,
-                            "reason": "Original precision: canonical export without quantization", "protections": []})
+        if request.format in UNQUANTIZED_FORMATS:
+            dtype = spec["dtype"]
+            if dtype in ("F64", "F32", "F16", "BF16"):
+                dtype = PRECISION_DTYPES.get(request.format, dtype)
+            cast = dtype != spec["dtype"]
+            estimate += math.prod(shape) * SIZES[dtype]
+            entries.append({"name": name, **spec, "action": "cast" if cast else "preserve",
+                            "format": request.format if cast else None, "output_dtype": dtype,
+                            "reason": f"Convert floating tensor to {request.format.upper()}" if cast else
+                                      "Canonical export without quantization; source dtype retained", "protections": []})
             continue
         layer_format = request.format
         group_size = None
@@ -294,14 +318,18 @@ def _plan_layers(request, tensors, references, native):
             precision.block_assignment()
             reason = f"Preserve matrix whose input width is not divisible by packing group {packing} for {layer_format}"
         size = spec["data_offsets"][1] - spec["data_offsets"][0]
+        group_scale_dtype = None
+        if selected and layer_format in ("asym_w4a8_int8", "w6a8_int8"):
+            group_scale_dtype = "F8_E4M3" if references.compact and request.use_profile_formats else "F32"
         if selected:
-            size = payload_bytes(layer_format, shape)
+            size = payload_bytes(layer_format, shape, group_scale_dtype or "F32")
             size += len(json.dumps(quantization_config(layer_format, group_size or 256), sort_keys=True).encode("utf-8"))
         estimate += size
         if not selected and not protections:
             protections = [reason]
         entries.append({"name": name, **spec, "action": "quantize" if selected else "preserve", "reason": reason,
                         "format": layer_format if selected else None, "protections": protections,
+                        "group_scale_dtype": group_scale_dtype,
                         "convrot_group_size": group_size if selected else None})
     return entries, estimate, precision
 
@@ -320,9 +348,11 @@ def validate_output(path, conversion_plan):
         for entry in conversion_plan["layers"]:
             name, shape = entry["name"], entry["shape"]
             expected.add(name)
-            if entry["action"] == "preserve":
-                if header[name]["shape"] != shape or header[name]["dtype"] != entry["dtype"]:
-                    raise ValueError(f"Preserved tensor changed structure: {name}")
+            if entry["action"] in ("preserve", "cast"):
+                if header[name]["shape"] != shape or header[name]["dtype"] != entry.get("output_dtype", entry["dtype"]):
+                    raise ValueError(f"Exported tensor changed structure: {name}")
+                if entry["action"] == "cast" and not torch.isfinite(reader.get_tensor(name)).all():
+                    raise ValueError(f"Non-finite output tensor: {name}")
                 continue
             module = name.removesuffix("weight")
             config_key = module + "comfy_quant"
@@ -334,7 +364,7 @@ def validate_output(path, conversion_plan):
             format = entry.get("format", conversion_plan["request"]["format"])
             if config != quantization_config(format, entry.get("convrot_group_size") or 256):
                 raise ValueError(f"Configuration mismatch: {config_key}")
-            for suffix, spec in storage_contract(format, shape).items():
+            for suffix, spec in storage_contract(format, shape, entry.get("group_scale_dtype") or "F32").items():
                 key = name + suffix
                 expected.add(key)
                 if header.get(key, {}).get("shape") != spec["shape"] or header.get(key, {}).get("dtype") != spec["dtype"]:
@@ -410,6 +440,7 @@ def _convert_local(request, emit=lambda event: None, cancelled=lambda: None, wor
           "convrot_selection": conversion_plan["convrot_selection"],
           "optimization_selection": conversion_plan["optimization_selection"],
           "quantize": sum(e["action"] == "quantize" for e in conversion_plan["layers"]),
+          "cast": sum(e["action"] == "cast" for e in conversion_plan["layers"]),
           "preserve": sum(e["action"] == "preserve" for e in conversion_plan["layers"])})
     required_disk = conversion_plan["estimated_payload_bytes"] * 2 + 16 * 1024 * 1024
     free_disk = shutil.disk_usage(Path(request.output).resolve().parent).free
@@ -459,6 +490,7 @@ def _convert_local(request, emit=lambda event: None, cancelled=lambda: None, wor
                         entry["shape"], entry["name"], layer_format, request.device,
                         conversion_plan["optimization_selection"], checkpoint,
                         group=entry.get("convrot_group_size") or 256, progress=optimization_progress,
+                        group_scale_dtype=entry.get("group_scale_dtype") or "F32",
                         observe=lambda event: emit({**event, "event": "optimization"}))
                     for reason, count in optimization_report["fallbacks"].items():
                         report["fallbacks"].append({"name": entry["name"], "reason": reason, "occurrences": count})
@@ -475,7 +507,14 @@ def _convert_local(request, emit=lambda event: None, cancelled=lambda: None, wor
                     if entry["action"] == "quantize":
                         stage = "quantize"
                         result, mse = quantize(tensor, entry["name"], layer_format, request.device, checkpoint,
-                                               convrot_group_size=entry.get("convrot_group_size") or 256)
+                                               convrot_group_size=entry.get("convrot_group_size") or 256,
+                                               group_scale_dtype=entry.get("group_scale_dtype") or "F32")
+                    elif entry["action"] == "cast":
+                        stage = "cast"
+                        checkpoint(f"Cast tensor to {request.format.upper()}")
+                        tensor = tensor.to(torch.bfloat16 if entry["output_dtype"] == "BF16" else torch.float16)
+                        if not torch.isfinite(tensor).all():
+                            raise ValueError(f"Non-finite {request.format.upper()} output (dtype overflow): {entry['name']}. Choose a wider output dtype; no checkpoint was published.")
                 if entry["action"] == "quantize":
                     stage = "write"
                     for name, value in result.items():
@@ -484,15 +523,19 @@ def _convert_local(request, emit=lambda event: None, cancelled=lambda: None, wor
                     del result, value
                 else:
                     stage = "write"
-                    checkpoint("Write preserved tensor")
+                    checkpoint("Write cast tensor" if entry["action"] == "cast" else "Write preserved tensor")
                     writer.add(entry["name"], tensor)
                 del tensor
             report["layers"].append({"name": entry["name"], "action": entry["action"], "format": entry["format"],
+                                     "group_scale_dtype": entry.get("group_scale_dtype"),
                                      "convrot_group_size": entry.get("convrot_group_size"),
                                      "reason": entry["reason"], "final_weight_mse": mse,
                                      "optimization": optimization_report})
             completed_bytes += entry["data_offsets"][1] - entry["data_offsets"][0]
-            emit({"event": "progress", "phase": "Saving original-precision tensors" if request.format == "original" else "Converting weights", "fraction": 0.85 * completed_bytes / max(total_bytes, 1),
+            phase = "Converting weights"
+            if request.format in UNQUANTIZED_FORMATS:
+                phase = "Saving original-precision tensors" if request.format == "original" else f"Saving {request.format.upper()} tensors"
+            emit({"event": "progress", "phase": phase, "fraction": 0.85 * completed_bytes / max(total_bytes, 1),
                   "completed": index + 1, "total": len(conversion_plan["layers"]), "name": entry["name"]})
         for source, expected in source_stats.items():
             stat = Path(source).stat()
@@ -503,8 +546,8 @@ def _convert_local(request, emit=lambda event: None, cancelled=lambda: None, wor
     except Exception as error:
         report["status"] = "failed_or_cancelled"
         report["counts"] = {action: sum(e["action"] == action for e in report["layers"])
-                            for action in ("quantize", "preserve")}
-        report["counts"]["failed"] = int(stage in ("read", "quantize", "write") and type(error).__name__ != "Cancelled")
+                            for action in ("quantize", "cast", "preserve")}
+        report["counts"]["failed"] = int(stage in ("read", "quantize", "cast", "write") and type(error).__name__ != "Cancelled")
         report["counts"]["unprocessed"] = len(conversion_plan["layers"]) - len(report["layers"]) - report["counts"]["failed"]
         report["failure_stage"] = stage
         report["last_attempted_tensor"] = entry["name"] if "entry" in locals() else None
@@ -518,7 +561,7 @@ def _convert_local(request, emit=lambda event: None, cancelled=lambda: None, wor
     report["cuda_peak_allocated_bytes"] = torch.cuda.max_memory_allocated(request.device) if request.device.startswith("cuda") else None
     report["validation"]["structural"] = True
     report["counts"] = {action: sum(e["action"] == action for e in report["layers"])
-                        for action in ("quantize", "preserve")}
+                        for action in ("quantize", "cast", "preserve")}
     report["counts"]["failed"] = 0
     optimized = [e["optimization"] for e in report["layers"] if e["optimization"]]
     report["optimization"] = {"mode": request.optimization_mode, "optimized_layers": len(optimized),

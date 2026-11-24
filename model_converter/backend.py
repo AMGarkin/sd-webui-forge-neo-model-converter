@@ -69,16 +69,16 @@ def quantize_nvfp4_tiled(read_rows, shape, name, device, checkpoint=lambda stage
             name + "_scale_2": scale.cpu(), name.removesuffix("weight") + "comfy_quant": config}, squared_error / (n * k)
 
 
-def quantize(weight, name, format, device, checkpoint=lambda stage: None, convrot_group_size=256):
+def quantize(weight, name, format, device, checkpoint=lambda stage: None, convrot_group_size=256, group_scale_dtype="F32"):
     import comfy_kitchen as ck
     resolve_convrot_group(1024, convrot_group_size)
     if format not in ADJUSTABLE_ROTATED_FORMATS and convrot_group_size != 256:
         raise ValueError(f"{format} does not support adjustable ConvRot groups in the target CUDA loader")
     with ck.use_backend("eager") if format in MICROSCALED_FORMATS else nullcontext():
-        return _quantize(weight, name, format, device, checkpoint, convrot_group_size)
+        return _quantize(weight, name, format, device, checkpoint, convrot_group_size, group_scale_dtype)
 
 
-def _quantize(weight, name, format, device, checkpoint, convrot_group_size):
+def _quantize(weight, name, format, device, checkpoint, convrot_group_size, group_scale_dtype):
     import torch
     from comfy_kitchen.tensor import QuantizedTensor
 
@@ -88,7 +88,7 @@ def _quantize(weight, name, format, device, checkpoint, convrot_group_size):
         raise ValueError(f"Non-finite source weight: {name}")
     config = quantization_config(format, convrot_group_size)
     checkpoint("Kitchen quantization")
-    layout, qdata, params = quantize_layout(weight, format, convrot_group_size)
+    layout, qdata, params = quantize_layout(weight, format, convrot_group_size, group_scale_dtype=group_scale_dtype)
     quant = QuantizedTensor(qdata, layout.__name__, params)
     checkpoint("Serialize quantized tensors")
     result = quant.state_dict(name)
@@ -111,7 +111,7 @@ def _quantize(weight, name, format, device, checkpoint, convrot_group_size):
     return result, error
 
 
-def quantize_layout(weight, format, convrot_group_size=256, scale=None):
+def quantize_layout(weight, format, convrot_group_size=256, scale=None, group_scale_dtype="F32"):
     """Share exact base settings with optimized candidates through Kitchen layouts."""
     import torch
     from comfy_kitchen.tensor.base import get_layout_class
@@ -127,10 +127,13 @@ def quantize_layout(weight, format, convrot_group_size=256, scale=None):
         layout_name = "TensorWiseINT8Layout"
         kwargs = dict(per_channel=rotated, convrot=rotated, convrot_groupsize=convrot_group_size, scale=scale)
     elif format in ("asym_w4a8_int8", "w6a8_int8"):
+        if group_scale_dtype not in ("F32", "F8_E4M3"):
+            raise ValueError("Grouped scale dtype must be F32 or F8_E4M3")
         layout_name = "AsymW4A8Int8Layout"
         kwargs = dict(group_size=16, convrot_groupsize=256, symmetric=True,
                       bits=4 if format == "asym_w4a8_int8" else 6, codebook=False,
-                      scale_dtype=torch.float32, stochastic_rounding=0, scale_search=False)
+                      scale_dtype=torch.float8_e4m3fn if group_scale_dtype == "F8_E4M3" else torch.float32,
+                      stochastic_rounding=0, scale_search=False)
     elif format == "convrot_w4a4":
         layout_name = "TensorCoreConvRotW4A4Layout"
         kwargs = dict(convrot_groupsize=convrot_group_size, quant_group_size=64, stochastic_rounding=0, linear_dtype="int4")
@@ -150,7 +153,7 @@ def quantize_layout(weight, format, convrot_group_size=256, scale=None):
     return layout, qdata, params
 
 
-def capabilities(device="cpu", formats=None, convrot_groups=None):
+def capabilities(device="cpu", formats=None, convrot_groups=None, group_scale_dtypes=None):
     device = resolve_device(device)
     result = {}
     for format in (FORMATS if formats is None else formats):
@@ -160,9 +163,11 @@ def capabilities(device="cpu", formats=None, convrot_groups=None):
             for group in groups:
                 width = max(256, group)
                 sample = torch.linspace(-1, 1, 16 * width).reshape(16, width)
-                quantize(sample, "probe.weight", format, device, convrot_group_size=group)
+                quantize(sample, "probe.weight", format, device, convrot_group_size=group,
+                         group_scale_dtype=(group_scale_dtypes or {}).get(format, "F32"))
             result[format] = {"available": True, "reason": "Kitchen quantize/serialize/dequantize probe passed",
-                              "export_engine": export_engine(format), "convrot_groups": list(groups)}
+                              "export_engine": export_engine(format), "convrot_groups": list(groups),
+                              "group_scale_dtype": (group_scale_dtypes or {}).get(format, "F32")}
         except Exception as error:
             result[format] = {"available": False, "reason": f"{type(error).__name__}: {error}"}
     return result

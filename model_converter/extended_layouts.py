@@ -316,6 +316,42 @@ def minimax(tensors, config):
     return mapping
 
 
+def minimax_pruned(tensors, config):
+    """Map already folded rank-k AdaLN coordinates to Comfy's native curve path."""
+    from .layouts import _blocks
+    rank, hidden, grid = config.get('adaln_rank'), config.get('hidden_size'), config.get('time_table_size')
+    if any(type(value) is not int or value <= 0 for value in (rank, hidden, grid)) or grid < 2:
+        raise ValueError('Pruned MiniMax requires explicit positive rank/hidden size and a time grid of at least two rows')
+    if config.get('_10eros', {}).get('mlp_source_gate_first') is not True:
+        raise ValueError('Pruned MiniMax requires the audited gate-first MLP declaration')
+    expected = {'time_embedder.table': [grid, rank], 'adaln_basis': [rank, config.get('time_embed_dim')],
+                'adaln_mean': [config.get('time_embed_dim')], 'norm_out.linear.weight': [2 * hidden, rank],
+                'norm_out.folded_bias': [2 * hidden]}
+    for block in _blocks(tensors, 'transformer_blocks'):
+        expected[f'transformer_blocks.{block}.adaln_proj.linear.weight'] = [18 * hidden, rank]
+        expected[f'transformer_blocks.{block}.adaln_proj.folded_bias'] = [18 * hidden]
+    for name, shape in expected.items():
+        if tensors.get(name, {}).get('shape') != shape:
+            raise ValueError(f'Pruned MiniMax folded AdaLN shape mismatch: {name}')
+    if len(_blocks(tensors, 'token_refiner.refiner_blocks')) != config.get('num_refiner_layers'):
+        raise ValueError('Pruned MiniMax token-refiner depth disagrees with config')
+    mapping = minimax(tensors, config)
+    # This audited pruned source and Comfy both store SwiGLU gate before up.
+    for name, (target, offset, swap) in list(mapping.items()):
+        if name.endswith('.ff.net.0.proj.weight'):
+            mapping[name] = (target, offset, False)
+    for name in tensors:
+        if name in ('adaln_basis', 'adaln_mean'):
+            mapping[name] = (name, None, False)
+        elif name == 'time_embedder.table':
+            mapping[name] = ('adaln_t_table', None, False)
+        elif name == 'norm_out.folded_bias':
+            mapping[name] = ('final_layer.adaln_proj.linear.bias', None, False)
+        elif name.endswith('.adaln_proj.folded_bias'):
+            mapping[name] = (name.replace('transformer_blocks.', 'blocks.').replace('.folded_bias', '.linear.bias'), None, False)
+    return mapping
+
+
 def finish_minimax(output, tensors, config):
     import torch
     count=config.get('rope_freq_dim',16)

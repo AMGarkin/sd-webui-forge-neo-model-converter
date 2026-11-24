@@ -5,6 +5,8 @@ import math
 
 FORMATS = ("float8_e4m3fn", "float8_e5m2", "int8_tensorwise", "int8_convrot",
            "asym_w4a8_int8", "w6a8_int8", "convrot_w4a4", "nvfp4", "mxfp8")
+PRECISION_DTYPES = {"bf16": "BF16", "fp16": "F16"}
+UNQUANTIZED_FORMATS = ("original", *PRECISION_DTYPES)
 ROTATED_FORMATS = ("int8_convrot", "asym_w4a8_int8", "w6a8_int8", "convrot_w4a4")
 ADJUSTABLE_ROTATED_FORMATS = ("int8_convrot", "convrot_w4a4")
 CONVROT_GROUP_SIZES = (4, 16, 64, 256, 1024)
@@ -56,7 +58,7 @@ def export_engine(format):
     return "kitchen-eager" if format in MICROSCALED_FORMATS else "kitchen-dispatch"
 
 
-def storage_contract(format, shape):
+def storage_contract(format, shape, group_scale_dtype="F32"):
     """Map weight suffixes to canonical safetensors dtype and storage shape."""
     n, k = shape
     if format in MICROSCALED_FORMATS:
@@ -72,8 +74,10 @@ def storage_contract(format, shape):
             result["_scale_2"] = {"dtype": "F32", "shape": []}
         return result
     if format in ("asym_w4a8_int8", "w6a8_int8"):
+        if group_scale_dtype not in ("F32", "F8_E4M3"):
+            raise ValueError("Grouped scale dtype must be F32 or F8_E4M3")
         return {"": {"dtype": "I8", "shape": [n, k // 2 if format == "asym_w4a8_int8" else 3 * k // 4]},
-                "_s_rel": {"dtype": "F32", "shape": [n, k // 16]},
+                "_s_rel": {"dtype": group_scale_dtype, "shape": [n, k // 16]},
                 "_s_channel": {"dtype": "F32", "shape": [n]}}
     if format == "convrot_w4a4":
         return {"": {"dtype": "I8", "shape": [n, k // 2]},
@@ -85,6 +89,6 @@ def storage_contract(format, shape):
             "_scale": {"dtype": "F32", "shape": [n, 1] if format == "int8_convrot" else []}}
 
 
-def payload_bytes(format, shape):
+def payload_bytes(format, shape, group_scale_dtype="F32"):
     return sum(math.prod(spec["shape"]) * (4 if spec["dtype"] == "F32" else 1)
-               for spec in storage_contract(format, shape).values())
+               for spec in storage_contract(format, shape, group_scale_dtype).values())

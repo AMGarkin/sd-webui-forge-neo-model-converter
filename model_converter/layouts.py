@@ -14,7 +14,8 @@ from .sources import component_config
 
 SUPPORTED_CLASSES = {"MOSSImageTransformer", "FluxTransformer2DModel", "Flux2Transformer2DModel", "Flux2KleinTransformer2DModel",
                      "ZImageTransformer2DModel", "PixArtTransformer2DModel", "SD3Transformer2DModel", "AuraFlowTransformer2DModel",
-                     "WanTransformer3DModel", "LTXVideoTransformer3DModel", "UNet2DConditionModel", "QwenImageTransformer2DModel"}
+                     "WanTransformer3DModel", "LTXVideoTransformer3DModel", "UNet2DConditionModel", "QwenImageTransformer2DModel",
+                     "MiniMaxH3PrunedTransformer3DModel"}
 LAYOUT_GAPS = {"SanaTransformer2DModel": "the inspected Forge Neo and ComfyUI commits have no Sana model implementation; remapping cannot supply an absent host architecture"}
 
 
@@ -350,19 +351,23 @@ def canonicalize(tensors, config):
                 "LTX2VideoTransformer3DModel": ("ltx2", extended_layouts.ltx2)}
     extended["Krea2Transformer2DModel"] = ("krea2", extended_layouts.krea2)
     extended["MiniMaxH3Transformer3DModel"] = ("minimax-h3", extended_layouts.minimax)
+    extended["MiniMaxH3PrunedTransformer3DModel"] = ("minimax-h3-pruned", extended_layouts.minimax_pruned)
     extended["Ideogram4Transformer2DModel"] = ("ideogram4", extended_layouts.ideogram)
     if cls in extended:
         adapter, builder = extended[cls]
         stack = "layers" if adapter in ("lumina2", "ideogram4") else "transformer_blocks"
         _check_config(tensors, config, ((stack, "num_layers"),))
         output = _mapped(tensors, builder(tensors, config))
-        if adapter == "minimax-h3":
+        if adapter in ("minimax-h3", "minimax-h3-pruned"):
             output = extended_layouts.finish_minimax(output,tensors,config)
         if adapter == "krea2":
             for name,spec in list(output.items()):
                 if re.fullmatch(r"blocks\.\d+\.mod.lin",name):
                     output[name]={**spec,"reshape":[math.prod(spec["shape"])],"shape":[math.prod(spec["shape"])]}
-        return output, {"adapter": adapter, "status": "canonical mapping; full-model validation is separate"}
+        layout = {"adapter": adapter, "status": "canonical mapping; full-model validation is separate"}
+        if adapter == "minimax-h3-pruned":
+            layout["warnings"] = ["Pruned MiniMax uses ComfyUI's native adaln_t_table curve loader. The audited Forge installation has no MiniMax model detector; layer-format support does not supply the architecture. Full-model generation is unverified."]
+        return output, layout
     if cls == "HiDreamImageTransformer2DModel" and all(k in tensors for k in (
             "x_embedder.proj.weight", "double_stream_blocks.0.block.adaLN_modulation.1.weight", "final_layer.linear.weight")):
         _check_config(tensors, config, (("double_stream_blocks", "num_layers"), ("single_stream_blocks", "num_single_layers")))

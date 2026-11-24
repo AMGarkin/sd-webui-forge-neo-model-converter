@@ -8,9 +8,10 @@ and existing outputs are never overwritten.
 Available formats: **FP8 E4M3FN, FP8 E5M2, INT8, INT8 ConvRot, INT4 ConvRot,
 W4A8, W6A8, NVFP4 and MXFP8**. Three optimization modes let you choose how much
 time to spend on conversion. Original-precision export can also assemble shards
-without quantization or dtype casting.
+without quantization or dtype casting. **BF16 / FP16** export converts floating
+tensors to the chosen dtype, including FP32 sources from Hugging Face.
 
-Outputs use the `comfy_quant` storage format understood by Forge Neo and ComfyUI.
+Quantized outputs use the `comfy_quant` storage format understood by Forge Neo and ComfyUI.
 Compatibility depends on the model, component loader and installed libraries;
 a listed profile is not a guarantee that every model variant works. Smaller files
 do not guarantee faster generation or unchanged image quality.

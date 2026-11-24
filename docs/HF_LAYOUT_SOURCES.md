@@ -1,5 +1,36 @@
 # Additional HF/Diffusers layout sources
 
+## MiniMax H3 pruned ErosMax adapter (2026-11-24)
+
+Source repository: `ibyteohdear/10Eros-Max-Transformer_8stepTURBO_v1.0_hybrid_VBVR_FUSED`,
+commit `9c0c2f88016fd1cc06c94e6e47da4fc225f767c3`. Audited root `config.json`,
+all five safetensors headers and `modeling_minimax_h3_pruned.py` as text only.
+No remote Python was imported/executed or copied into production. The independently
+authored adapter renames the already folded timestep table/biases, fuses Q/K/V
+and preserves the declared gate-first MLP order. FP32/F64 buffers retain source
+dtypes. Both `adaln_basis` and `adaln_mean` remain, although ordinary ComfyUI does
+not consume them. The source's baked LoRA and timestep approximation are retained;
+the converter does not merge another LoRA or reconstruct the removed timestep MLP.
+
+Target: ComfyUI `2fcb6cef9ab1b6dc556b7cff1765a0724ad5e884`,
+`comfy/model_detection.py` and `comfy/ldm/minimax/model.py` native
+`adaln_t_table` path, with `apply_silu=False` and FP32 folded-bias projection.
+The source computes a BF16 projection followed by FP32 bias addition; the target
+curve projection computes in FP32, so bitwise source-forward parity is not claimed.
+Meta constructor/shape agreement, sampled synthetic expressions and quantized
+layer forwards are distinct from populated full-model loading/generation.
+The audited Forge `a057d9ede903eb51c38ceb20e186b6841665d250` has no MiniMax detector.
+
+Separate precision-map reference: LokkenJP/TenEros_Max_optimized_learned at
+`3415250db9e2cb89b886f5375c1306fc933e215f`, the ErosMax v1 Compact assembly report
+and technical overview. The new profile implements the 208 published assignments
+as facts; no upstream converter/learner Python, weights or activation data are
+copied. The reference weights remain subject to their upstream MiniMax license.
+Compact now uses FP8 group scales and FP32 channel scales, matching the
+reference's scale storage precision. Its symmetric codebook-free grids still
+differ from the reference learned W4 codebook. This map is not its activation
+learner or allocator and does not inherit its generation evidence.
+
 Updated: 2026-11-21. The new assembly/read/transport code is independently
 implemented. No upstream converter Python is executed or imported in production.
 The separate bundled Comfy contract tables retain their GPL notice and license in

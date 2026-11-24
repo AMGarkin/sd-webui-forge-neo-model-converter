@@ -5,9 +5,11 @@ import json
 from pathlib import Path
 from .formats import ROTATED_FORMATS
 from .reference_data import general_protection, ctq_filter
+from . import compact
 
 
 PROFILE_INFO = {
+    compact.PROFILE: ("MiniMax H3 Compact W4/W6/INT8 (LokkenJP map)", compact.DESCRIPTION),
     "moss-image-comfy-v1": ("MOSS-Image SFT (Comfy layout)",
                             "Convert block projections; preserve conditioning, modulation, norms and output."),
     "flux1-bfl-conservative-v1": ("FLUX.1 (BFL layout)",
@@ -21,7 +23,7 @@ PROFILE_INFO = {
     "qwen3-text-conservative-v1": ("Qwen3 text encoder",
                                    "Convert attention and MLP projections; preserve embeddings, norms and output heads."),
 }
-PROFILES = tuple(PROFILE_INFO)
+PROFILES = tuple(profile for profile in PROFILE_INFO if profile != compact.PROFILE)
 
 
 def profile_description(profile):
@@ -128,6 +130,9 @@ def universal_selection(name, spec, format, minimum_dimension=64, protect_genera
 
 
 def select_profile(tensors, profile):
+    if profile == compact.PROFILE:
+        compact.validate_layout(tensors)
+        return "", re.compile(r"(?:token_refiner\.)?blocks\.\d+\.(?:attn\.(?:qkv_proj|out_proj)|mlp\.fc[12])\.weight$")
     if profile == "moss-image-comfy-v1":
         required = json.loads(Path(__file__).with_name("moss_image_shapes.json").read_text(encoding="utf-8"))
         for index in range(42):
