@@ -1,0 +1,467 @@
+{
+  "source": "https://github.com/silveroxides/convert_to_quant",
+  "commit": "b0f05390dcdba252b7c5ceec94519229afbbeb9d",
+  "source_file": "convert_to_quant/constants.py",
+  "source_sha256": "f4310e12e824179a01d4666fe1562fd23b9c1c9c9191235a5ee24fb34cd9d1af",
+  "license": "MIT (declared in upstream pyproject.toml)",
+  "base_exclusions": [
+    "norm",
+    "bias",
+    "embed_tokens",
+    "lm_head",
+    "shared",
+    "patch_embedding",
+    "audio_model.patch_embedding",
+    "ref_conv",
+    "control_adapter",
+    "motion_encoder.enc.net_app",
+    "face_encoder.conv",
+    "pose_patch_embedding",
+    "motion_encoder.enc.fc",
+    "img_emb.proj",
+    "k_norm",
+    "q_norm",
+    "motion_encoder.dec",
+    "head.modulation",
+    "casual_audio_encoder",
+    "cond_encoder",
+    "frame_packer",
+    "norm_k",
+    "norm_q",
+    "tekken_model",
+    "multi_modal_projector",
+    "patch_conv",
+    "ln_pre",
+    "input_layernorm",
+    "attention_norm",
+    "post_attention_layernorm",
+    "mm_input_projection_weight"
+  ],
+  "filters": {
+    "gemma4": {
+      "help": "Gemma4 text/multimodal model: skip audio, per_layer_input_gate, per_layer_projection, vision, multi_modal_projector",
+      "category": "text",
+      "exclude": [
+        "audio",
+        "per_layer_input_gate",
+        "per_layer_projection",
+        "vision",
+        "multi_modal_projector"
+      ]
+    },
+    "qwen_vlm": {
+      "help": "Qwen VLM family: skip first/last language layers, embeddings, MTP, and the full visual encoder",
+      "category": "text",
+      "exclude": [
+        ".layers.0.",
+        "lm_head",
+        "embed_tokens",
+        "in_proj_a",
+        "in_proj_b",
+        "visual.",
+        "mtp."
+      ],
+      "exclude_final_language_layer": true,
+      "preserve_dtype": {
+        "bfloat16": [
+          ".*"
+        ]
+      }
+    },
+    "qwen35": {
+      "help": "Compatibility alias for --qwen_vlm",
+      "category": "text",
+      "alias_for": "qwen_vlm"
+    },
+    "t5xxl": {
+      "help": "T5-XXL text encoder: skip norms/biases, remove decoder layers",
+      "category": "text",
+      "exclude": [
+        "norm",
+        "bias",
+        "embed_tokens",
+        "lm_head",
+        "shared",
+        "patch_embedding",
+        "audio_model.patch_embedding",
+        "ref_conv",
+        "control_adapter",
+        "motion_encoder.enc.net_app",
+        "face_encoder.conv",
+        "pose_patch_embedding",
+        "motion_encoder.enc.fc",
+        "img_emb.proj",
+        "k_norm",
+        "q_norm",
+        "motion_encoder.dec",
+        "head.modulation",
+        "casual_audio_encoder",
+        "cond_encoder",
+        "frame_packer",
+        "norm_k",
+        "norm_q",
+        "tekken_model",
+        "multi_modal_projector",
+        "patch_conv",
+        "ln_pre",
+        "input_layernorm",
+        "attention_norm",
+        "post_attention_layernorm",
+        "mm_input_projection_weight"
+      ],
+      "remove": [
+        "decoder",
+        "lm_head"
+      ]
+    },
+    "mistral": {
+      "help": "Mistral text encoder exclusions",
+      "category": "text",
+      "exclude": [
+        "norm",
+        "bias",
+        "embed_tokens",
+        "lm_head",
+        "shared",
+        "patch_embedding",
+        "audio_model.patch_embedding",
+        "ref_conv",
+        "control_adapter",
+        "motion_encoder.enc.net_app",
+        "face_encoder.conv",
+        "pose_patch_embedding",
+        "motion_encoder.enc.fc",
+        "img_emb.proj",
+        "k_norm",
+        "q_norm",
+        "motion_encoder.dec",
+        "head.modulation",
+        "casual_audio_encoder",
+        "cond_encoder",
+        "frame_packer",
+        "norm_k",
+        "norm_q",
+        "tekken_model",
+        "multi_modal_projector",
+        "patch_conv",
+        "ln_pre",
+        "input_layernorm",
+        "attention_norm",
+        "post_attention_layernorm",
+        "mm_input_projection_weight"
+      ]
+    },
+    "visual": {
+      "help": "Visual encoder: skip MLP layers (down/up/gate proj)",
+      "category": "text",
+      "exclude": [
+        "mlp.down_proj",
+        "mlp.up_proj",
+        "mlp.gate_proj"
+      ]
+    },
+    "generic_text": {
+      "help": "Generic text encoder: skip MLP layers (down/up/gate proj)",
+      "category": "text"
+    },
+    "anima": {
+      "help": "Anima diffusion model: keep first blocks, adaln_modulation, final/embedding layers high-precision",
+      "category": "diffusion",
+      "highprec": [
+        "net.blocks.0.",
+        "net.blocks.1.adaln_modulation",
+        "final_layer",
+        "llm_adapter",
+        "t_embedder",
+        "x_embedder"
+      ]
+    },
+    "lens": {
+      "help": "LENS diffusion model: keep time_text_embed, img_in, norm_out, proj_out, some mod layers high-precision",
+      "category": "diffusion",
+      "highprec": [
+        "time_text_embed",
+        "img_in",
+        "norm_out",
+        "proj_out",
+        "img_mod.1",
+        "txt_mod.1",
+        "txt_in"
+      ]
+    },
+    "flux2": {
+      "help": "Flux.2: keep modulation/guidance/time/final layers high-precision",
+      "category": "diffusion",
+      "highprec": [
+        "stream_modulation",
+        "guidance_in",
+        "time_in",
+        "final_layer",
+        "img_in",
+        "txt_in"
+      ]
+    },
+    "distillation_large": {
+      "help": "Chroma/distilled (large): keep distilled_guidance, final, img/txt_in high-precision",
+      "category": "diffusion",
+      "highprec": [
+        "distilled_guidance_layer",
+        "final_layer",
+        "img_in",
+        "txt_in"
+      ]
+    },
+    "distillation_small": {
+      "help": "Chroma/distilled (small): keep only distilled_guidance high-precision",
+      "category": "diffusion",
+      "highprec": [
+        "distilled_guidance_layer"
+      ]
+    },
+    "nerf_large": {
+      "help": "NeRF (large): keep nerf_blocks, distilled_guidance, txt_in high-precision",
+      "category": "diffusion",
+      "highprec": [
+        "distilled_guidance_layer",
+        "nerf_blocks",
+        "nerf_image_embedder",
+        "txt_in",
+        "_attn.proj"
+      ]
+    },
+    "nerf_small": {
+      "help": "NeRF (small): keep nerf_blocks, distilled_guidance high-precision",
+      "category": "diffusion",
+      "highprec": [
+        "distilled_guidance_layer",
+        "nerf_blocks",
+        "nerf_image_embedder"
+      ]
+    },
+    "radiance": {
+      "help": "Radiance model: keep img_in_patch, nerf_final_layer high-precision",
+      "category": "diffusion",
+      "highprec": [
+        "img_in_patch",
+        "nerf_final_layer_conv",
+        "__x0__"
+      ]
+    },
+    "krea2": {
+      "help": "Krea2: keep firs, las, tml, txtfusion, last.modulation, tpro layers high-precision",
+      "category": "diffusion",
+      "highprec": [
+        "firs",
+        "las",
+        "tml",
+        "txtfusion",
+        "last.modulatio",
+        "tpro"
+      ],
+      "preserve_dtype": {
+        "float32": [
+          "(?:^|\\.)(?:first|last\\.linear|tmlp\\.(?:0|2)|tproj\\.1|txtfusion\\.projector|txtmlp\\.(?:1|3))\\.weight$"
+        ]
+      }
+    },
+    "ideogram4": {
+      "help": "Ideogram4: keep embed_image_indicator, t_embedding, adaln_proj, final_layer, input_proj layers high-precision",
+      "category": "diffusion",
+      "highprec": [
+        "embed_image_indicator",
+        "t_embedding",
+        "llm_cond_proj",
+        "adaln_proj",
+        "final_layer",
+        "input_proj"
+      ]
+    },
+    "wan": {
+      "help": "WAN video model: skip embeddings, encoders, head",
+      "category": "video",
+      "exclude": [
+        "norm",
+        "bias",
+        "embed_tokens",
+        "lm_head",
+        "shared",
+        "patch_embedding",
+        "audio_model.patch_embedding",
+        "ref_conv",
+        "control_adapter",
+        "motion_encoder.enc.net_app",
+        "face_encoder.conv",
+        "pose_patch_embedding",
+        "motion_encoder.enc.fc",
+        "img_emb.proj",
+        "k_norm",
+        "q_norm",
+        "motion_encoder.dec",
+        "head.modulation",
+        "casual_audio_encoder",
+        "cond_encoder",
+        "frame_packer",
+        "norm_k",
+        "norm_q",
+        "tekken_model",
+        "multi_modal_projector",
+        "patch_conv",
+        "ln_pre",
+        "input_layernorm",
+        "attention_norm",
+        "post_attention_layernorm",
+        "mm_input_projection_weight"
+      ],
+      "highprec": [
+        "text_embedding",
+        "time_embedding",
+        "audio_model.text_embedding",
+        "casual_audio_encoder",
+        "frame_packer",
+        "trainable_cond_mask",
+        "cond_encoder",
+        "audio_model.time_embedding",
+        "time_projection",
+        "video_model.time_projection",
+        "head.head",
+        "face_encoder.out_proj",
+        "face_adapter",
+        "audio_injector"
+      ]
+    },
+    "hunyuan": {
+      "help": "Hunyuan Video 1.5: skip layernorm, attn norms, vision_in",
+      "category": "video",
+      "exclude": [
+        "layernorm",
+        "img_attn_k_norm",
+        "img_attn_q_norm",
+        "txt_attn_k_norm",
+        "txt_attn_q_norm",
+        "norm1",
+        "norm2",
+        "vision_in.proj.0",
+        "vision_in.proj.4",
+        "img_in.proj",
+        "cond_type_embedding"
+      ]
+    },
+    "minimaxh3": {
+      "help": "MiniMax H3: keep patch/condition/final/time and token-refiner layers high-precision",
+      "category": "video",
+      "highprec": [
+        "audio_patch_proj",
+        "condition_proj",
+        "final_layer",
+        "time_embedder",
+        "token_refiner",
+        "video_patch_proj"
+      ]
+    },
+    "qwen": {
+      "help": "Qwen Image: skip added norms, keep time_text_embed high-precision",
+      "category": "image",
+      "exclude": [
+        "norm_added_k",
+        "norm_added_q",
+        "norm_k",
+        "norm_q",
+        "txt_norm"
+      ],
+      "highprec": [
+        "time_text_embed",
+        "img_in",
+        "norm_out",
+        "proj_out",
+        "transformer_blocks.0.img_mod.1",
+        "txt_in"
+      ]
+    },
+    "zimage": {
+      "help": "Z-Image: skip cap_embedder/norms, keep x_embedder/final high-precision",
+      "category": "image",
+      "exclude": [
+        "cap_embedder.0",
+        "cap_pad_token",
+        "attention_norm1",
+        "attention_norm2",
+        "ffn_norm1",
+        "ffn_norm2",
+        "k_norm",
+        "q_norm",
+        "x_pad_token"
+      ],
+      "highprec": [
+        "x_embedder",
+        "clip_text_pooled_proj",
+        "final_layer",
+        "cap_embedder.1",
+        "adaLN_modulation",
+        "t_embedder",
+        "time_text_embed"
+      ]
+    },
+    "zimage_refiner": {
+      "help": "Z-Image Refiner: keep context/noise refiner high-precision",
+      "category": "image",
+      "exclude": [
+        "cap_embedder.0",
+        "cap_pad_token",
+        "attention_norm1",
+        "attention_norm2",
+        "ffn_norm1",
+        "ffn_norm2",
+        "k_norm",
+        "q_norm",
+        "x_pad_token"
+      ],
+      "highprec": [
+        "context_refiner",
+        "noise_refiner"
+      ]
+    },
+    "boogu": {
+      "help": "Boogu: keep image_index_embedding, ref_image_patch_embedder, time_caption_embed, x_embedder high-precision",
+      "category": "image",
+      "highprec": [
+        "image_index_embedding",
+        "ref_image_patch_embedder",
+        "time_caption_embed",
+        "x_embedder",
+        "norm_out.linear_1",
+        "norm_out.linear_2"
+      ]
+    },
+    "ltxv2": {
+      "help": "LTXv2: keep some transformer blocks high-precision and exclude vae and vocoder",
+      "category": "video",
+      "highprec": [
+        "scale_shift_table",
+        "text_embedding_projection",
+        "audio_vae",
+        "audio_embeddings_connector",
+        "adaln_single",
+        "audio_adaln_single",
+        "audio_patchify_proj",
+        "audio_proj_out",
+        "audio_prompt_adaln_single",
+        "av_ca_a2v_gate_adaln_single",
+        "av_ca_audio_scale_shift_adaln_single",
+        "av_ca_v2a_gate_adaln_single",
+        "av_ca_video_scale_shift_adaln_single",
+        "patchify_proj",
+        "proj_out",
+        "prompt_adaln_single",
+        "transformer_blocks.0.",
+        "transformer_blocks.1.",
+        "transformer_blocks.46.",
+        "transformer_blocks.47.",
+        "video_embeddings_connector",
+        "vae.decoder",
+        "vae.encoder",
+        "vocoder",
+        "to_gate_logits"
+      ]
+    }
+  }
+}

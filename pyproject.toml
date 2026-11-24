@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "forge-neo-model-converter"
+version = "0.1.0.dev0"
+description = "Host-independent experimental ComfyUI checkpoint exporter"
+readme = "README.md"
+requires-python = ">=3.10"
+# Runtime packages belong to the host; never upgrade them from the extension.
+dependencies = []
+
+[project.optional-dependencies]
+optimization = ["prodigy-plus-schedule-free==2.0.1"]
+
+[tool.setuptools]
+license-files = ["LICENSE", "docs/STARNODES_LICENSE.md", "docs/CTQ_NOTICE.md", "docs/COMFY_LAYOUT_NOTICE.md", "docs/COMFY_LAYOUT_LICENSE.md"]
+
+[tool.setuptools.packages.find]
+include = ["model_converter*"]
+
+[tool.setuptools.package-data]
+model_converter = ["*.json"]

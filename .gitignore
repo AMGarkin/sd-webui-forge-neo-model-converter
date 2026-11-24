@@ -29,8 +29,21 @@ outputs/
 artifacts/
 *.partial
 *.log
+.converter-*/
 
 # Local operating-system files
 Thumbs.db
 Desktop.ini
 .DS_Store
+
+# Local development instructions, history, tests and machine-specific evidence.
+# Public documentation is an explicit list; new internal notes stay local.
+/AGENTS.md
+/tests/
+/docs/*
+!/docs/USER_GUIDE.md
+!/docs/STARNODES_LICENSE.md
+!/docs/CTQ_NOTICE.md
+!/docs/COMFY_LAYOUT_NOTICE.md
+!/docs/COMFY_LAYOUT_LICENSE.md
+!/docs/HF_LAYOUT_SOURCES.md

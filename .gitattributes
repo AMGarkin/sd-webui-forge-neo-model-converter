@@ -1,0 +1,3 @@
+# Preserve the pinned third-party data bytes for provenance verification.
+model_converter/starnodes_models.json -text whitespace=cr-at-eol
+model_converter/ctq_filters.json -text whitespace=cr-at-eol
