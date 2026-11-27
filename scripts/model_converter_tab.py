@@ -323,7 +323,7 @@ def build_tab():
                 try:
                     snapshot = jobs.snapshot(job_id)
                 except KeyError:
-                    return
+                    break
                 details = snapshot.get("diagnostics", "")
                 if snapshot.get("exit_code"):
                     details = f"Process exit code: {snapshot['exit_code']}\n" + details
@@ -332,6 +332,8 @@ def build_tab():
                 if snapshot["done"]:
                     return
                 time.sleep(0.3)
+            # Gradio 4.40 clears outputs if the monitor ends before its first yield.
+            yield (gr.skip(),) * len(monitor_outputs)
 
         inputs = [folder, source, output, format, device, profile, save_report, state,
                   precision_policy, first_blocks, last_blocks, preserve_patterns, layer_rules, pruned_protection,
@@ -339,10 +341,10 @@ def build_tab():
                   hf_component, hf_set, hf_keep, hf_catalog, protect_layers, convrot_group_size, dynamic_convrot,
                   optimization_mode, optimization_optimizer, optimization_speed, optimization_steps, optimization_seed,
                   optimization_early_stop, optimization_patience, optimization_min_gain]
+        monitor_outputs = [progress, result, diagnostics, report, start, preview, status]
         for button, command in ((preview, "plan"), (start, "convert")):
-            button.click(lambda *args, cmd=command: launch(*args, command=cmd), inputs,
-                         [state, progress, result, diagnostics, report, start, preview, status], queue=False).then(
-                             monitor, state, [progress, result, diagnostics, report, start, preview, status], concurrency_limit=None)
+            button.click(lambda *args, cmd=command: launch(*args, command=cmd), inputs, [state, *monitor_outputs], queue=False).then(
+                             monitor, state, monitor_outputs, concurrency_limit=None)
 
         def stop(job_id):
             if job_id:

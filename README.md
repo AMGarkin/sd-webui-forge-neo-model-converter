@@ -16,6 +16,8 @@ Compatibility depends on the model, component loader and installed libraries;
 a listed profile is not a guarantee that every model variant works. Smaller files
 do not guarantee faster generation or unchanged image quality.
 
+![Model Converter tab with a Hugging Face transformer selected for INT8 ConvRot quantization](docs/model-converter.png)
+
 ## Installation
 
 The easiest way is to install directly from Forge Neo:
