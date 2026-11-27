@@ -44,7 +44,7 @@ def group_files(names):
         files = group["files"]
         shards = [SHARD.fullmatch(PurePosixPath(f).name) for f in files]
         error = None
-        if any(shards):
+        if not group["index"] and any(shards):
             totals = {int(m[3]) for m in shards if m}
             if not all(shards) or len(totals) != 1:
                 error = "Mixed single/sharded files or conflicting shard counts"
@@ -53,6 +53,23 @@ def group_files(names):
         result.append({"folder": "" if folder == "." else folder, "stem": stem,
                        **group, "error": error})
     return result
+
+
+def indexed_weight_files(group, weight_map):
+    """Resolve an index's exact files when multiple shard sizes share a stem."""
+    if not isinstance(weight_map, dict) or not weight_map:
+        raise ValueError("Invalid HF weight_map")
+    folder = group["folder"]
+    indexed = set()
+    for name in weight_map.values():
+        if len(safe_relative(name).parts) != 1 or not name.endswith(".safetensors"):
+            raise ValueError("HF index must reference safetensors in its own component directory")
+        indexed.add(f"{folder}/{name}" if folder else name)
+    if group["files"]:
+        selected = group_files(indexed)
+        if not indexed.issubset(group["files"]) or len(selected) != 1 or selected[0]["error"]:
+            raise ValueError("HF index disagrees with the selected shard set/variant")
+    return sorted(indexed)
 
 
 def local_sets(directory):

@@ -10,6 +10,11 @@ from .profiles import universal_selection
 
 SOURCE_URL = "https://github.com/Starnodes2024/comfyui-starnodes-modelconverter"
 SOURCE_COMMIT = "b3852dae4383520c8c9aa2003795edf525d097fe"
+SOURCE_SHA256 = "d45f7e607accafe43bc02fad6d23cc3d7259dc30cf63f01dabecf7257e4d6254"
+RECIPE_SOURCES = {
+    "RMBG-3.0": ("1810656675b0bc7872a29ee25377f3a7a6414d3c",
+                 "d91f93f9ef3bb483abe2e276a3c1d64190b7301a634fd5f03d69eacad854e5f6"),
+}
 
 
 @lru_cache(maxsize=1)
@@ -34,7 +39,7 @@ def catalog_description(profile):
 
 class CatalogProfile:
     def __init__(self, profile, pruned=False):
-        data, self.source_hash = catalog_data()
+        data, self.catalog_hash = catalog_data()
         self.name = profile.removeprefix("star:")
         if self.name not in data["models"]:
             raise ValueError(f"Unknown Star model profile: {self.name}")
@@ -87,8 +92,9 @@ class CatalogProfile:
         fields = (*protection_fields, *(field for field, _ in self.overrides))
         matches = {field: {token: sum(token in name for name in tensors)
                           for token in self.recipe.get(field, [])} for field in fields}
-        return {"name": self.name, "source": SOURCE_URL, "commit": SOURCE_COMMIT,
-                "source_sha256": self.source_hash, "license": "MIT; see docs/STARNODES_LICENSE.md",
+        commit, source_hash = RECIPE_SOURCES.get(self.name, (SOURCE_COMMIT, SOURCE_SHA256))
+        return {"name": self.name, "source": SOURCE_URL, "commit": commit,
+                "source_sha256": source_hash, "catalog_sha256": self.catalog_hash, "license": "MIT; see docs/STARNODES_LICENSE.md",
                 "pruned_extra_protection": self.pruned, "pattern_matches": matches,
                 "matching": "case-sensitive literal substring (upstream semantics)",
                 "dtype_hints": "keep_fp16/keep_fp32 preserve source precision; no implicit casting",

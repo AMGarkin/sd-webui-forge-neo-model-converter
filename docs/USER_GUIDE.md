@@ -170,8 +170,15 @@ independently established for every user run; Klein PNG metadata records comfy-c
 Adapters cover audited variants of MOSS, FLUX.1/2, Z-Image, SD3, PixArt, AuraFlow,
 Diffusers UNet, Wan (including VACE/Animate), Hunyuan Video 1/1.5, LTX Video and
 LTX-2/2.5, Mochi, Lumina2, HiDream, Chroma, Cosmos/Predict2, Ideogram, Krea, Ming,
-MiniMax H3 and YuE2. Native/Transformers namespaces are retained where appropriate,
-including multimodal Qwen3-VL. Mapping coverage is not generation coverage.
+MiniMax H3, Fibo 2.0, RMBG-3.0 and YuE2. Native/Transformers namespaces are
+retained where appropriate, including multimodal Qwen3-VL.
+
+Automatic policy selection reads the selected component's keys and applicable
+config after acquisition. This allows the transformer and text encoder from
+one repository to use different policies. Known Fibo layouts select the Fibo
+recipe. An official BRIA RMBG-3.0 HF source with those same keys selects
+RMBG-3.0. Select the RMBG-3.0 policy manually for a standalone copy with no
+retained HF source record.
 
 Known limits:
 
@@ -179,8 +186,8 @@ Known limits:
   Audited Forge snapshots lacked detectors for several added architectures,
   including Hunyuan Video, Mochi, LTX-2, HiDream, Cosmos and Ideogram. Check the
   current host's architecture support separately.
-- Sana had no implementation in the inspected hosts. Original alternate FLUX.3/
-  Fibo layouts, unspecified Lens/NeRF architectures and arbitrary new Wan extensions
+- Sana had no implementation in the inspected hosts. Alternate FLUX.3 layouts,
+  unspecified Lens/NeRF architectures and arbitrary new Wan extensions
   are not established by catalog labels.
 - Generic text/visual profiles do not prove component-loader support. The inspected
   SheetSage2 audio loader does not consume `comfy_quant`.

@@ -1,5 +1,25 @@
 # Additional HF/Diffusers layout sources
 
+## Fibo 2.0 and RMBG-3.0 (2026-11-27)
+
+The original `briaai/Fibo-2.0-dev` (`b01e5a34a0a9540c65f585c2c281535deabac16d`),
+`briaai/Fibo-2.0-edit-turbo` (`f14db8d1c94a314a5cb803d2fafb9db5664e1ddc`),
+and `briaai/RMBG-3.0` (`87330e3f87d9d856a21453e5acd120219984a66b`) headers
+share the same transformer namespace and shapes. The adapter assembles Q/K/V
+for block self-attention and K/V for the other attention modules in projection
+order. It retains the original separate MLP matrices and width 9536. ComfyUI
+commit `7c78b5641ab2d6cb7f7766a183a8a43a59de0a8b` detects the split-MLP
+configuration and its meta constructor matches all 682 keys and shapes in
+each mapped checkpoint. The independent mapping uses the existing lazy tensor
+recipes. No upstream source code or weight values are bundled.
+
+The published fused RMBG checkpoints in `briaai/RMBG-3.0-Comfy` at
+`63880aa074782b09e7ae17184960dfd6de70ab85` have width 9728 after padding.
+The bundled Star RMBG policy selects the same 215 matrix names as the INT8
+ConvRot records when planned against the matching published BF16 header.
+The source adapter retains the split storage. This is structural and
+selection evidence. Full-model loading and generation were not exercised.
+
 ## MiniMax H3 pruned ErosMax adapter (2026-11-24)
 
 Source repository: `ibyteohdear/10Eros-Max-Transformer_8stepTURBO_v1.0_hybrid_VBVR_FUSED`,

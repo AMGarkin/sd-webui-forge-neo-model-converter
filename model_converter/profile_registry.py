@@ -31,6 +31,8 @@ CTQ_LABELS = {
 }
 STAR_LABELS = {
     "Flux 2 Tight": "FLUX.2 / Klein (W4A8/W6A8: include MLP)",
+    "Qwen-Image W4A8": "Qwen-Image (W4A8/W6A8)",
+    "Fibo-2.0-edit-turbo": "Fibo 2.0 (preserve Perceiver)",
     "Text-Encoder": "Text encoder", "Text-Encoder HQ": "Text encoder HQ",
     "Text-Encoder MaxQ": "Text encoder MaxQ", "SDXL (Not NVFP4)": "SDXL",
     "minimax_h3": "MiniMax H3", "minimax_h3_image": "MiniMax H3 Image",

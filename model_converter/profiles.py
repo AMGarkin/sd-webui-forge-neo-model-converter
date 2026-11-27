@@ -4,6 +4,7 @@ import re
 import json
 from pathlib import Path
 from .formats import ROTATED_FORMATS
+from .profile_detection import detect_diffusion_profile, detect_text_profile
 from .reference_data import general_protection, ctq_filter
 from . import compact
 
@@ -41,9 +42,7 @@ def profile_description(profile):
     return PROFILE_INFO[profile][1]
 
 
-def detect_profile(tensors, format=None):
-    if qwen3vl_identity(tensors):
-        return "ctq:qwen_vlm"
+def detect_native_profile(tensors):
     matches = []
     for profile in PROFILES:
         try:
@@ -53,20 +52,39 @@ def detect_profile(tensors, format=None):
             pass
     if len(matches) > 1:
         raise ValueError("Multiple model profiles match. Select a profile explicitly.")
-    profile = matches[0] if matches else "universal"
-    if profile == "flux2-bfl-conservative-v1" and format in ("asym_w4a8_int8", "w6a8_int8"):
-        return "star:Flux 2 Tight"
+    return matches[0] if matches else None
+
+
+def resolve_detected_profile(profile, format, repo=""):
+    if profile == "star:Fibo-2.0-edit-turbo" and isinstance(repo, str) and repo.casefold() in (
+            "briaai/rmbg-3.0", "briaai/rmbg-3.0-comfy"):
+        return "star:RMBG-3.0"
+    if format in ("asym_w4a8_int8", "w6a8_int8"):
+        return {"flux2-bfl-conservative-v1": "star:Flux 2 Tight",
+                "star:Qwen-Image": "star:Qwen-Image W4A8"}.get(profile, profile)
     return profile
 
 
+def detect_profile(tensors, format=None, *, config=None, repo=""):
+    profile = detect_native_profile(tensors)
+    if profile is None:
+        profile = detect_diffusion_profile(tensors)
+    if profile is None:
+        profile = "ctq:qwen_vlm" if qwen3vl_identity(tensors) else detect_text_profile(tensors.keys(), config or {})
+    return resolve_detected_profile(profile or "universal", format, repo)
+
+
 def qwen3vl_identity(tensors):
-    for language, visual in (("model.language_model.", "model.visual."), ("model.", "visual.")):
+    for language, visual in (("model.language_model.", "model.visual."), ("language_model.", "visual."),
+                             ("model.", "visual.")):
         anchors = (language + "layers.0.self_attn.q_norm.weight", language + "layers.0.self_attn.k_norm.weight",
                    visual + "deepstack_merger_list.0.norm.weight", visual + "merger.linear_fc2.weight")
         if all(k in tensors for k in anchors):
             shape = tensors.get(language + "embed_tokens.weight", {}).get("shape", [])
             if len(shape) != 2:
                 continue
+            if all(k in tensors for k in ("model.x_embedder.proj1.weight", "model.final_layer2.linear.weight")):
+                return {"family": "hidream_o1", "variant": "", "label": "HiDream-O1-Image"}
             width = shape[1]
             variant = {2048: "2B", 2560: "4B", 4096: "8B", 5120: "32B"}.get(width, "")
             return {"family": "qwen3_vl", "variant": variant,
@@ -173,7 +191,8 @@ def select_profile(tensors, profile):
                 "final_layer.", "pos_embedder."),
             r"blocks\.\d+\.(?:(?:self_attn|cross_attn)\.(?:q_proj|k_proj|v_proj|output_proj)|mlp\.layer[12])\.weight$")
     if profile == "qwen3-text-conservative-v1":
-        if not all(key in tensors for key in ("model.layers.0.self_attn.q_norm.weight", "model.layers.0.self_attn.k_norm.weight")):
+        if ("model.layers.0.pre_feedforward_layernorm.weight" in tensors or
+                not all(key in tensors for key in ("model.layers.0.self_attn.q_norm.weight", "model.layers.0.self_attn.k_norm.weight"))):
             raise ValueError("Input lacks the Qwen3 Q/K norm layout signature")
         return recognized_layout(tensors, "Qwen3 text encoder", (
             "model.embed_tokens.weight", "model.layers.0.self_attn.q_proj.weight",

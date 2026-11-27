@@ -251,6 +251,29 @@ def ideogram(tensors, config):
     return mapping
 
 
+def fibo2(tensors):
+    mapping = {}
+    for name in tensors:
+        match = re.fullmatch(r"(.+\.(?:attention|cross_attention|self_attention))\.to_([qkv])\.weight", name)
+        if match:
+            prefix = match[1]
+            if prefix.endswith(".attention"):
+                if match[2] == "q":
+                    _fuse(mapping, tensors, [f"{prefix}.to_{p}.weight" for p in "qkv"], prefix + ".qkv.weight")
+                continue
+            if match[2] in "kv":
+                if match[2] == "k":
+                    _fuse(mapping, tensors, [f"{prefix}.to_{p}.weight" for p in "kv"], prefix + ".to_kv.weight")
+                continue
+        target = _renames(name, ((".attention.norm_q.", ".attention.q_norm."),
+                                 (".attention.norm_k.", ".attention.k_norm."),
+                                 (".attention.to_out.0.", ".attention.out."),
+                                 (".cross_attention.to_out.0.", ".cross_attention.to_out."),
+                                 (".self_attention.to_out.0.", ".self_attention.to_out.")))
+        mapping[name] = (target, None, False)
+    return mapping
+
+
 def yue2(tensors, config):
     from .layouts import _blocks, _mapped, recipe, source_part
     mapping={}

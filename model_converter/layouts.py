@@ -313,6 +313,8 @@ def canonicalize(tensors, config):
         "seedvr2": ("negative_conditioning", "positive_conditioning", "blocks.0.ada.vid.attn_gate"),
         "flux3": ("emb_in.image.weight", "early_stream_modulations.image.lin.weight", "single_blocks.0.mlp_in.weight"),
         "minimax-native": ("video_patch_proj.weight", "condition_proj.weight", "rope.inv_freq"),
+        "krea2": ("first.weight", "txtfusion.projector.weight", "blocks.0.attn.wq.weight"),
+        "ltx2": ("patchify_proj.weight", "audio_patchify_proj.weight", "transformer_blocks.0.attn1.to_q.weight"),
     }
     for adapter, anchors in native_signatures.items():
         if all(k in tensors for k in anchors):
@@ -339,9 +341,16 @@ def canonicalize(tensors, config):
             for k in keys:
                 del output[k]
         return output, {"adapter": "moss-qkv", "status": "canonical mapping; full-model validation is separate"}
+    if all(k in tensors for k in ("perceiver.latent_queries", "layers.0.attention.to_q.weight",
+                                   "layers.0.feed_forward.w1.weight", "final_layer.linear.weight")):
+        _check_config(tensors, config, (("layers", "n_layers"), ("noise_refiner", "n_refiner_layers"),
+                                        ("perceiver.layers", "perceiver_num_layers")))
+        output = _mapped(tensors, extended_layouts.fibo2(tensors))
+        return output, {"adapter": "fibo2-split-mlp",
+                        "status": "canonical attention layout with separate source MLP matrices; full-model validation is separate"}
     # Canonical keys take precedence over config declarations and storage grouping.
-    from .profiles import detect_profile
-    if detect_profile(tensors) != "universal":
+    from .profiles import detect_native_profile, qwen3vl_identity
+    if detect_native_profile(tensors) or qwen3vl_identity(tensors):
         return tensors, {"adapter": "canonical", "status": "recognized canonical key layout"}
     extended = {"HunyuanVideoTransformer3DModel": ("hunyuan-video", extended_layouts.hunyuan),
                 "HunyuanVideo15Transformer3DModel": ("hunyuan-video-1.5", extended_layouts.hunyuan),
@@ -445,21 +454,20 @@ def canonicalize(tensors, config):
     text_classes = ("Qwen", "T5", "UMT5", "CLIP", "Llama", "Gemma", "Mistral")
     if cls.startswith(text_classes) or any(str(a).startswith(text_classes) for a in config.get("architectures", [])):
         return tensors, {"adapter": "transformers-identity", "status": "native text keys; component quantized loader support must be verified"}
-    # Broader native layouts may use manual family recipes without belonging to
-    # the six auto-detected policies. Require a concrete canonical key signature.
+    # Other canonical namespaces still require concrete layout signatures.
     native_pairs = (("blocks.0.self_attn.q.weight", "patch_embedding.weight"),
                     ("patchify_proj.weight", "transformer_blocks.0.attn1.to_q.weight"),
                     ("input_blocks.0.0.weight", "out.2.weight"),
                     ("double_blocks.0.img_attn_qkv.weight", "img_in.proj.weight"))
     if any(all(k in tensors for k in pair) for pair in native_pairs):
-        return tensors, {"adapter": "canonical-family", "status": "canonical family signature; use its manual policy; full-model loading is unverified"}
+        return tensors, {"adapter": "canonical-family", "status": "canonical family signature; full-model loading is unverified"}
     validate_config(config)
     if cls in SUPPORTED_CLASSES:
         raise ValueError(f"Known component {cls} has no audited mapping for these keys. Check its config, complete component and architecture variant.")
     return original_tensors, {"adapter": "universal-identity", "status": "EXPERIMENTAL / UNVERIFIED: unknown keys retained; no host compatibility established"}
 
 
-def inspect_canonical(source):
+def inspect_canonical(source, *, detect=False):
     tensors, metadata = inspect(source, with_metadata=True)
     config = component_config(source)
     tensors, layout = canonicalize(tensors, config)
@@ -516,4 +524,7 @@ def inspect_canonical(source):
             raise ValueError("Source/target config metadata conflict")
         metadata={**metadata,"config":json.dumps({**existing,"transformer":{**transformer,**target_config}})}
         layout["embedded_target_config"]=target_config
+    if detect:
+        from .profiles import detect_profile
+        layout["detected_profile"] = detect_profile(tensors, config=config)
     return tensors, metadata, layout

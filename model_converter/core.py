@@ -16,7 +16,7 @@ from .io import inspect, read_header, StreamWriter, TensorReader, SIZES
 from .formats import PRECISION_DTYPES, UNQUANTIZED_FORMATS
 from . import compact
 from .layouts import inspect_canonical, CanonicalReader, input_files
-from .profiles import select_profile, detect_profile, universal_selection, dimension_anchor, qwen3vl_identity, PROFILES
+from .profiles import select_profile, resolve_detected_profile, universal_selection, dimension_anchor, qwen3vl_identity, PROFILES
 from .policies import PrecisionPolicy
 from .references import ReferenceProtection
 from .profile_registry import profile_label
@@ -105,7 +105,7 @@ def _plan_local(request, probe=True):
     request.device = "cpu" if unquantized else resolve_device(request.device)
     if request.format not in (*FORMATS, *UNQUANTIZED_FORMATS):
         raise ValueError("Unsupported format; no silent fallback is permitted")
-    tensors, source_metadata, source_layout = inspect_canonical(request.source)
+    tensors, source_metadata, source_layout = inspect_canonical(request.source, detect=request.profile == "auto")
     output = Path(request.output).resolve()
     if output.suffix != ".safetensors" or not output.parent.is_dir():
         raise ValueError("Output requires an existing directory and .safetensors suffix")
@@ -114,7 +114,9 @@ def _plan_local(request, probe=True):
     if request.save_report and Path(str(output) + ".report.json").exists():
         raise FileExistsError("Output report already exists")
     if request.profile == "auto":
-        request.profile = detect_profile(tensors, request.format)
+        from .huggingface import provenance
+        origin = request.source_provenance or provenance(request.source) or {}
+        request.profile = resolve_detected_profile(source_layout["detected_profile"], request.format, origin.get("repo", ""))
     for field in ("pruned_protection", "protect_general", "protect_model", "use_profile_formats", "protect_layers"):
         if type(getattr(request, field)) is not bool:
             raise ValueError(f"{field} must be true or false")

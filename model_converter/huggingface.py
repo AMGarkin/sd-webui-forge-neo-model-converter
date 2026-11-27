@@ -17,7 +17,7 @@ import uuid
 import time
 from urllib.parse import urlparse
 
-from .sources import safe_relative, group_files, group_source
+from .sources import safe_relative, group_files, group_source, indexed_weight_files
 from .io import inspect, unique_object
 
 SCHEMA = 1
@@ -371,7 +371,7 @@ class Acquisition:
         for n in (f"{folder}/config.json" if folder else "config.json", "model_index.json"):
             if n in catalog["files"] and n not in metadata:
                 metadata.append(n)
-        names = sorted(set(group["files"] + ([group["index"]] if group["index"] else []) + metadata))
+        names = sorted(set(([group["index"]] if group["index"] else group["files"]) + metadata))
         # Nonstandard indexed sets must not cause a blind component-wide download.
         # Fetch the small index only after its own preflight, then validate each name.
         def local(n):
@@ -470,16 +470,7 @@ class Acquisition:
             # metadata, never weights, and its bytes were included in preflight.
             fetch(group["index"])
             mapping = _read(local(group["index"])).get("weight_map")
-            if not isinstance(mapping, dict) or not mapping:
-                raise ValueError("Invalid HF weight_map")
-            indexed = []
-            for name in set(mapping.values()):
-                rel = safe_relative(name)
-                if len(rel.parts) != 1 or not name.endswith(".safetensors"):
-                    raise ValueError("HF index must reference safetensors in its own component directory")
-                indexed.append(f"{folder}/{name}" if folder else name)
-            if group["files"] and set(group["files"]) != set(indexed):
-                raise ValueError("HF index disagrees with the selected shard set/variant")
+            indexed = indexed_weight_files(group, mapping)
             names = sorted(set(indexed + metadata + [group["index"]]))
             total, missing = sizes(names)
             preflight = check_space()
@@ -506,7 +497,7 @@ class Acquisition:
                 dep_config = dependency_folder + "/config.json"
                 if dep_config not in catalog["files"]:
                     raise ValueError("LTX-2 connectors config is missing")
-                additions = dep["files"] + [dep_config] + ([dep["index"]] if dep["index"] else [])
+                additions = [dep_config] + ([dep["index"]] if dep["index"] else dep["files"])
                 names = sorted(set(names + additions))
                 total, missing = sizes(names)
                 preflight = check_space()
@@ -516,15 +507,7 @@ class Acquisition:
                 if dep["index"]:
                     fetch(dep["index"])
                     index = _read(local(dep["index"])).get("weight_map")
-                    if not isinstance(index, dict) or not index:
-                        raise ValueError("Invalid LTX-2 connectors weight_map")
-                    indexed = []
-                    for n in set(index.values()):
-                        if len(safe_relative(n).parts) != 1 or not n.endswith(".safetensors"):
-                            raise ValueError("LTX-2 connectors index path traversal")
-                        indexed.append(dependency_folder + "/" + n)
-                    if dep["files"] and set(dep["files"]) != set(indexed):
-                        raise ValueError("LTX-2 connectors index/set mismatch")
+                    indexed = indexed_weight_files(dep, index)
                     names = sorted(set(names + indexed))
                     total, missing = sizes(names)
                     preflight = check_space()

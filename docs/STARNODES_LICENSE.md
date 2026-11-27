@@ -1,8 +1,9 @@
 # StarNodes profile data license
 
-The bundled `model_converter/starnodes_models.json` is copied from
+The bundled `model_converter/starnodes_models.json` contains recipes from
 https://github.com/Starnodes2024/comfyui-starnodes-modelconverter
-commit `b3852dae4383520c8c9aa2003795edf525d097fe`.
+commit `b3852dae4383520c8c9aa2003795edf525d097fe` and the RMBG-3.0 recipe
+from commit `1810656675b0bc7872a29ee25377f3a7a6414d3c`.
 This notice applies to that third-party data, not to the original project code.
 
 MIT License

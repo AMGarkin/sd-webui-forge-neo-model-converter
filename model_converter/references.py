@@ -188,7 +188,7 @@ class ReferenceProtection:
         if self.protect_model and any(ctq_filter(name).get("preserve_dtype") for name in self.filters):
             notes.append("CTQ protected-dtype hints retain original source precision; no implicit precision casting is applied.")
         if not self.native and (self.filters or self.star):
-            notes.append("Reference profiles are manual family selections; matching tensor names do not prove full-model compatibility.")
+            notes.append("Reference protections apply to the selected family. Full-model compatibility requires separate verification.")
         if self.native and self.protect_model:
             notes.append("Native signatures validate the layout; linear selection uses protection rules, without a projection-name allowlist.")
         return notes

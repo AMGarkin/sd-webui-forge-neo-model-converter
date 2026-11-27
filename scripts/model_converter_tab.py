@@ -17,7 +17,7 @@ from model_converter.diagnostics import exception_message
 from model_converter.jobs import Jobs
 from model_converter.job_storage import cleanup_stale_jobs
 from model_converter.paths import clean_path, resolve_source
-from model_converter.profiles import profile_description, detect_profile, qwen3vl_identity
+from model_converter.profiles import profile_description, resolve_detected_profile, qwen3vl_identity
 from model_converter.policies import PRECISION_CHOICES
 from model_converter.profile_registry import model_profile_choices, canonical_ui_profile, profile_label
 from model_converter.references import ReferenceProtection
@@ -437,8 +437,9 @@ def build_tab():
                         return ("Select a source model to show available profile rules.",
                                 gr.update(interactive=False), gr.update(interactive=False))
                     actual = selected_model_source(src, selected_folder, model_choices(), script_path)
-                    tensors = inspect_canonical(actual)[0]
-                    selected_profile = detect_profile(tensors, fmt)
+                    tensors, _, layout = inspect_canonical(actual, detect=True)
+                    origin = provenance(actual) or {}
+                    selected_profile = resolve_detected_profile(layout["detected_profile"], fmt, origin.get("repo", ""))
                     identity = qwen3vl_identity(tensors)
                 else:
                     identity = None
